@@ -119,12 +119,14 @@
                             <table id="obligationsTable" class="data-table">
                                 <thead>
                                     <tr>
+                                        <th>Empresa</th>
+                                        <th>Abreviatura</th>
+                                        <th>Responsable</th>
                                         <th>Entidad</th>
-                                        <th>Tipo</th>
-                                        <th>Descripción</th>
-                                        <th>Fecha Vencimiento</th>
+                                        <th>Tipo de Obligación</th>
+                                        <th>Período</th>
+                                        <th>Fecha Límite</th>
                                         <th>Estado</th>
-                                        <th>Notas</th>
                                         <th>Acciones</th>
                                     </tr>
                                 </thead>
@@ -150,33 +152,41 @@
                 <div class="modal-body">
                     <form id="editForm">
                         <div class="form-group">
+                            <label class="form-label">Empresa</label>
+                            <input type="text" id="editEmpresa" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Abreviatura</label>
+                            <input type="text" id="editAbreviatura" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Responsable</label>
+                            <input type="text" id="editResponsable" class="form-control" required>
+                        </div>
+                        <div class="form-group">
                             <label class="form-label">Entidad</label>
-                            <input type="text" id="editEntity" class="form-control" required>
+                            <input type="text" id="editEntidad" class="form-control" required>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Tipo</label>
-                            <input type="text" id="editType" class="form-control" required>
+                            <label class="form-label">Tipo de Obligación</label>
+                            <input type="text" id="editObligacion" class="form-control" required>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Descripción</label>
-                            <textarea id="editDescription" class="form-control" rows="3" required></textarea>
+                            <label class="form-label">Período</label>
+                            <input type="text" id="editPeriodo" class="form-control" placeholder="ej: ene-feb-2025" required>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Fecha de Vencimiento</label>
-                            <input type="date" id="editDueDate" class="form-control" required>
+                            <label class="form-label">Fecha Límite Presentación</label>
+                            <input type="date" id="editFechaLimite" class="form-control" required>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Estado</label>
-                            <select id="editStatus" class="form-control" required>
+                            <select id="editEstado" class="form-control" required>
                                 <option value="Pendiente">Pendiente</option>
                                 <option value="Completado">Completado</option>
                                 <option value="Vencido">Vencido</option>
                                 <option value="En Proceso">En Proceso</option>
                             </select>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Notas</label>
-                            <textarea id="editNotes" class="form-control" rows="2"></textarea>
                         </div>
                     </form>
                 </div>

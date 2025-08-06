@@ -1,15 +1,12 @@
-// Google Sheets Tax Calendar Application - Fixed Version with DATA sheet and OAuth fixes
-// Production Configuration with corrected sheet name
+// Google Sheets Tax Calendar Application - Fixed Column Mappings
+// Production Configuration
 const CONFIG = {
     API_KEY: 'AIzaSyBdlizVp_hOembaoFJYE_rKHCvFtn9asok',
     CLIENT_ID: '341125602004-36tl0jfhtd7ce21csjun41fel085res8.apps.googleusercontent.com',
     SPREADSHEET_ID: '10L6aSKz8oPtq4ZpXcO921vCIciHWlCRqo_w5pAHc3yo',
     DISCOVERY_DOC: 'https://sheets.googleapis.com/$discovery/rest?version=v4',
     SCOPES: 'https://www.googleapis.com/auth/spreadsheets',
-    // CRITICAL FIX: Updated possible sheet names with DATA as primary
-    POSSIBLE_SHEET_NAMES: ['DATA', 'Calendario', 'Sheet1', 'Hoja1', 'CALENDARIO OBLIGACIONES HOLDING'],
-    CURRENT_SHEET_NAME: 'DATA', // Default to DATA
-    RANGE: 'DATA!A:J' // Default range using DATA sheet
+    RANGE: 'DATA!A:I'
 };
 
 // Global State Management
@@ -30,8 +27,6 @@ class AppState {
         this.currentEditingRow = null;
         this.initializationAttempts = 0;
         this.maxInitAttempts = 3;
-        this.detectedSheetName = null;
-        this.tokenClient = null;
     }
 
     setLoading(loading) {
@@ -129,49 +124,7 @@ class AlertManager {
     }
 }
 
-// Wait for Google APIs to load
-function waitForGoogleAPI() {
-    return new Promise((resolve, reject) => {
-        let attempts = 0;
-        const maxAttempts = 100; // 10 seconds
-        
-        const checkAPI = () => {
-            attempts++;
-            if (typeof gapi !== 'undefined' && gapi.load) {
-                resolve();
-            } else if (attempts >= maxAttempts) {
-                reject(new Error('Google API no se cargó'));
-            } else {
-                setTimeout(checkAPI, 100);
-            }
-        };
-        
-        checkAPI();
-    });
-}
-
-// Wait for Google GSI to load
-function waitForGoogleGSI() {
-    return new Promise((resolve, reject) => {
-        let attempts = 0;
-        const maxAttempts = 100; // 10 seconds
-        
-        const checkGSI = () => {
-            attempts++;
-            if (typeof google !== 'undefined' && google.accounts && google.accounts.oauth2) {
-                resolve();
-            } else if (attempts >= maxAttempts) {
-                reject(new Error('Google GSI no se cargó'));
-            } else {
-                setTimeout(checkGSI, 100);
-            }
-        };
-        
-        checkGSI();
-    });
-}
-
-// FIXED: Google APIs Initialization with better error handling and OAuth setup
+// Google APIs Initialization
 async function initializeGoogleAPIs() {
     try {
         console.log('Initializing Google APIs... Attempt:', appState.initializationAttempts + 1);
@@ -183,44 +136,77 @@ async function initializeGoogleAPIs() {
             throw new Error('Se agotaron los intentos de conexión');
         }
 
-        // Wait for Google API to be available
-        await waitForGoogleAPI();
-        console.log('Google API disponible');
+        // Wait for gapi to be available with timeout
+        let gapiReady = false;
+        let attempts = 0;
+        const maxAttempts = 50; // 5 seconds total
 
-        // Initialize gapi client
-        await new Promise((resolve, reject) => {
-            gapi.load('client', {
-                callback: resolve,
-                onerror: reject
-            });
-        });
+        while (!gapiReady && attempts < maxAttempts) {
+            if (typeof gapi !== 'undefined') {
+                gapiReady = true;
+                break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+            attempts++;
+        }
 
-        await gapi.client.init({
-            apiKey: CONFIG.API_KEY,
-            discoveryDocs: [CONFIG.DISCOVERY_DOC],
-        });
+        if (!gapiReady) {
+            throw new Error('Google API library no disponible');
+        }
+
+        // Initialize gapi with timeout
+        await Promise.race([
+            new Promise((resolve, reject) => {
+                gapi.load('client', {
+                    callback: resolve,
+                    onerror: () => reject(new Error('Error cargando cliente GAPI'))
+                });
+            }),
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Timeout cargando GAPI')), 5000)
+            )
+        ]);
+
+        await Promise.race([
+            gapi.client.init({
+                apiKey: CONFIG.API_KEY,
+                discoveryDocs: [CONFIG.DISCOVERY_DOC],
+            }),
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Timeout inicializando cliente GAPI')), 5000)
+            )
+        ]);
 
         appState.gapiInited = true;
         console.log('GAPI initialized successfully');
 
-        // Wait for Google GSI to be available
-        try {
-            await waitForGoogleGSI();
-            console.log('Google GSI disponible');
+        // Initialize Google Sign-In
+        let googleAccountsReady = false;
+        attempts = 0;
 
-            // FIXED: Initialize OAuth2 token client properly
-            appState.tokenClient = google.accounts.oauth2.initTokenClient({
-                client_id: CONFIG.CLIENT_ID,
-                scope: CONFIG.SCOPES,
-                prompt: '', // Don't always show consent screen
-                callback: handleOAuthCallback,
-                error_callback: handleOAuthError
-            });
+        while (!googleAccountsReady && attempts < maxAttempts) {
+            if (typeof google !== 'undefined' && google.accounts) {
+                googleAccountsReady = true;
+                break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+            attempts++;
+        }
 
-            appState.gsiInited = true;
-            console.log('GSI initialized successfully');
-        } catch (gsiError) {
-            console.warn('GSI initialization failed:', gsiError);
+        if (googleAccountsReady) {
+            try {
+                google.accounts.id.initialize({
+                    client_id: CONFIG.CLIENT_ID,
+                    callback: handleCredentialResponse,
+                });
+                appState.gsiInited = true;
+                console.log('GSI initialized successfully');
+            } catch (gsiError) {
+                console.warn('GSI initialization failed, but continuing:', gsiError);
+                appState.gsiInited = false;
+            }
+        } else {
+            console.warn('Google Sign-In library not available, but continuing');
             appState.gsiInited = false;
         }
 
@@ -241,57 +227,11 @@ async function initializeGoogleAPIs() {
     }
 }
 
-// FIXED: OAuth callback handler
-async function handleOAuthCallback(response) {
-    try {
-        console.log('OAuth callback received:', response);
-        
-        if (response.error) {
-            throw new Error('OAuth error: ' + response.error);
-        }
-
-        if (!response.access_token) {
-            throw new Error('No se recibió token de acceso');
-        }
-
-        // Set the access token for gapi client
-        gapi.client.setToken({
-            access_token: response.access_token
-        });
-
-        appState.isSignedIn = true;
-        updateAuthUI();
-        appState.updateConnectionStatus('success', 'Conectado a Google Sheets');
-        
-        // Load spreadsheet data
-        await loadSpreadsheetData();
-        AlertManager.success('Conectado exitosamente a Google Sheets');
-        
-    } catch (error) {
-        console.error('OAuth callback error:', error);
-        appState.isSignedIn = false;
-        updateAuthUI();
-        appState.updateConnectionStatus('error', 'Error de autorización');
-        AlertManager.error('Error en la autorización: ' + error.message);
-    } finally {
-        appState.setLoading(false);
-    }
-}
-
-// FIXED: OAuth error handler
-function handleOAuthError(error) {
-    console.error('OAuth error:', error);
-    appState.setLoading(false);
-    appState.isSignedIn = false;
-    updateAuthUI();
-    
-    if (error.type === 'popup_closed') {
-        appState.updateConnectionStatus('error', 'Ventana de autenticación cerrada');
-        AlertManager.warning('Ventana de autenticación cerrada. Inténtalo de nuevo.');
-    } else {
-        appState.updateConnectionStatus('error', 'Error de autorización');
-        AlertManager.error('Error en la autorización. Usando datos de demostración.');
-    }
+// Handle credential response
+function handleCredentialResponse(response) {
+    console.log('Credential response received');
+    // For this implementation, we'll use the simpler OAuth flow
+    handleAuthClick();
 }
 
 // Setup auth button
@@ -317,15 +257,10 @@ function setupAuthButton() {
     updateAuthUI();
 }
 
-// FIXED: Handle authorization with better error handling
+// Handle authorization
 async function handleAuthClick() {
     if (!appState.gapiInited) {
         AlertManager.error('Las APIs de Google no están inicializadas');
-        return;
-    }
-
-    if (!appState.tokenClient) {
-        AlertManager.error('Cliente OAuth no está inicializado');
         return;
     }
 
@@ -333,17 +268,51 @@ async function handleAuthClick() {
         appState.setLoading(true);
         appState.updateConnectionStatus('loading', 'Autenticando...');
 
-        // FIXED: Request access token with proper error handling
-        console.log('Requesting access token...');
-        appState.tokenClient.requestAccessToken();
-        
-        // Note: The actual handling is done in the callback functions
-        
+        // Check if google.accounts.oauth2 is available
+        if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+            throw new Error('OAuth library no disponible');
+        }
+
+        // Create a token client
+        const tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: CONFIG.CLIENT_ID,
+            scope: CONFIG.SCOPES,
+            callback: async (response) => {
+                try {
+                    if (response.error) {
+                        throw new Error('Authorization failed: ' + response.error);
+                    }
+                    
+                    console.log('Authorization successful');
+                    appState.isSignedIn = true;
+                    updateAuthUI();
+                    appState.updateConnectionStatus('success', 'Conectado a Google Sheets');
+                    
+                    await loadSpreadsheetData();
+                    AlertManager.success('Conectado exitosamente a Google Sheets');
+                } catch (callbackError) {
+                    console.error('Authorization callback error:', callbackError);
+                    AlertManager.error('Error en la autorización: ' + callbackError.message);
+                    appState.updateConnectionStatus('error', 'Error de autorización');
+                } finally {
+                    appState.setLoading(false);
+                }
+            },
+            error_callback: (error) => {
+                console.error('Authorization error:', error);
+                appState.setLoading(false);
+                appState.updateConnectionStatus('error', 'Error de autorización');
+                AlertManager.error('Error en la autorización. Usando datos de demostración.');
+            }
+        });
+
+        tokenClient.requestAccessToken();
+
     } catch (error) {
-        console.error('Auth click error:', error);
+        console.error('Auth error:', error);
         appState.setLoading(false);
         appState.updateConnectionStatus('error', 'Error de autenticación');
-        AlertManager.error('Error de autenticación: ' + error.message);
+        AlertManager.error('Error de autenticación: ' + error.message + '. Usando datos de demostración.');
     }
 }
 
@@ -352,9 +321,7 @@ function handleSignoutClick() {
     try {
         const token = gapi.client.getToken();
         if (token !== null) {
-            google.accounts.oauth2.revoke(token.access_token, () => {
-                console.log('Token revoked');
-            });
+            google.accounts.oauth2.revoke(token.access_token);
             gapi.client.setToken('');
         }
     } catch (error) {
@@ -364,7 +331,6 @@ function handleSignoutClick() {
     appState.isSignedIn = false;
     appState.data = [];
     appState.filteredData = [];
-    appState.detectedSheetName = null;
     
     updateAuthUI();
     clearAllData();
@@ -391,79 +357,65 @@ function updateAuthUI() {
     }
 }
 
-// CRITICAL FIX: Detect correct sheet name and load data
+// Helper function to concatenate period and year
+function createPeriodoConcat(periodo, ano) {
+    if (!periodo || !ano) return '';
+    return `${periodo}-${ano}`;
+}
+
+// Helper function to split concatenated period
+function splitPeriodoConcat(periodoConcat) {
+    if (!periodoConcat) return { periodo: '', ano: '' };
+    const parts = periodoConcat.split('-');
+    if (parts.length >= 2) {
+        const ano = parts[parts.length - 1];
+        const periodo = parts.slice(0, -1).join('-');
+        return { periodo, ano };
+    }
+    return { periodo: periodoConcat, ano: '' };
+}
+
+// Load spreadsheet data
 async function loadSpreadsheetData() {
     try {
         console.log('Loading spreadsheet data...');
         appState.setLoading(true);
-        appState.updateConnectionStatus('loading', 'Detectando hoja de cálculo...');
 
-        let response = null;
-        let successfulSheetName = null;
-
-        // Try each possible sheet name
-        for (const sheetName of CONFIG.POSSIBLE_SHEET_NAMES) {
-            try {
-                console.log(`Trying sheet name: ${sheetName}`);
-                appState.updateConnectionStatus('loading', `Probando hoja: ${sheetName}...`);
-
-                const range = `${sheetName}!A:J`;
-                response = await gapi.client.sheets.spreadsheets.values.get({
-                    spreadsheetId: CONFIG.SPREADSHEET_ID,
-                    range: range,
-                });
-
-                if (response && response.result && response.result.values) {
-                    successfulSheetName = sheetName;
-                    appState.detectedSheetName = sheetName;
-                    CONFIG.CURRENT_SHEET_NAME = sheetName;
-                    CONFIG.RANGE = range;
-                    console.log(`Successfully connected to sheet: ${sheetName}`);
-                    break;
-                }
-            } catch (sheetError) {
-                console.log(`Failed to load from sheet ${sheetName}:`, sheetError.result?.error?.message || sheetError.message);
-                continue;
-            }
-        }
-
-        if (!response || !successfulSheetName) {
-            throw new Error('No se pudo encontrar ninguna hoja válida en el documento');
-        }
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+            spreadsheetId: CONFIG.SPREADSHEET_ID,
+            range: CONFIG.RANGE,
+        });
 
         const rows = response.result.values;
         if (!rows || rows.length === 0) {
-            throw new Error(`No se encontraron datos en la hoja ${successfulSheetName}`);
+            throw new Error('No se encontraron datos en la hoja de cálculo');
         }
 
-        // Process data (skip header row)
+        // Process data (skip header row) - Fixed column mappings
         const headers = rows[0];
         appState.data = rows.slice(1).map((row, index) => ({
             rowIndex: index + 2, // +2 because we skip header and arrays are 0-indexed
-            entity: row[0] || '',
-            type: row[1] || '',
-            description: row[2] || '',
-            dueDate: row[3] || '',
-            status: row[4] || 'Pendiente',
-            notes: row[5] || '',
-            priority: row[6] || 'Media',
-            amount: row[7] || '',
-            responsible: row[8] || '',
-            completedDate: row[9] || ''
+            empresa: row[0] || '',           // Column A
+            abreviatura: row[1] || '',       // Column B  
+            responsable: row[2] || '',       // Column C
+            entidad: row[3] || '',           // Column D (FIXED)
+            obligacion: row[4] || '',        // Column E (FIXED)
+            periodo: row[5] || '',           // Column F
+            ano: row[6] || '',               // Column G
+            fechaLimite: row[7] || '',       // Column H (FIXED - for calendar)
+            estado: row[8] || 'Pendiente',   // Column I (FIXED)
+            periodoConcat: createPeriodoConcat(row[5], row[6]) // Concatenated field
         }));
 
-        console.log(`Loaded ${appState.data.length} records from sheet: ${successfulSheetName}`);
+        console.log(`Loaded ${appState.data.length} records`);
         appState.filteredData = [...appState.data];
         
         initializeInterface();
-        appState.updateConnectionStatus('success', `Conectado a hoja: ${successfulSheetName}`);
-        AlertManager.success(`${appState.data.length} obligaciones cargadas desde la hoja ${successfulSheetName}`);
+        AlertManager.success(`${appState.data.length} obligaciones cargadas desde Google Sheets`);
 
     } catch (error) {
         console.error('Error loading data:', error);
-        const errorMessage = error.result?.error?.message || error.message;
-        appState.updateConnectionStatus('error', `Error cargando datos: ${errorMessage}`);
-        AlertManager.error('Error al cargar datos de Google Sheets: ' + errorMessage + '. Usando datos de demostración.');
+        AlertManager.error('Error al cargar datos de Google Sheets: ' + error.message + '. Usando datos de demostración.');
         
         // Load demo data as fallback
         loadDemoData();
@@ -479,68 +431,68 @@ function loadDemoData() {
     appState.data = [
         {
             rowIndex: 2,
-            entity: 'SUNAT',
-            type: 'IGV',
-            description: 'Declaración mensual de IGV',
-            dueDate: '2025-01-12',
-            status: 'Pendiente',
-            notes: 'Revisar facturas del mes anterior',
-            priority: 'Alta',
-            amount: '15000',
-            responsible: 'Contador',
-            completedDate: ''
+            empresa: 'Empresa ABC S.A.C.',
+            abreviatura: 'ABC',
+            responsable: 'Juan Pérez',
+            entidad: 'SUNAT',
+            obligacion: 'IGV Mensual',
+            periodo: 'ene-feb',
+            ano: '2025',
+            fechaLimite: '2025-01-12',
+            estado: 'Pendiente',
+            periodoConcat: 'ene-feb-2025'
         },
         {
             rowIndex: 3,
-            entity: 'SUNAT',
-            type: 'Renta',
-            description: 'Pago a cuenta de Impuesto a la Renta',
-            dueDate: '2025-01-12',
-            status: 'En Proceso',
-            notes: 'En preparación',
-            priority: 'Alta',
-            amount: '8500',
-            responsible: 'Gerencia',
-            completedDate: ''
+            empresa: 'Servicios XYZ E.I.R.L.',
+            abreviatura: 'XYZ',
+            responsable: 'María González',
+            entidad: 'SUNAT',
+            obligacion: 'Renta 3ra Categoría',
+            periodo: 'dic',
+            ano: '2024',
+            fechaLimite: '2025-01-12',
+            estado: 'En Proceso',
+            periodoConcat: 'dic-2024'
         },
         {
             rowIndex: 4,
-            entity: 'ESSALUD',
-            type: 'Contribuciones',
-            description: 'Declaración y pago de contribuciones',
-            dueDate: '2025-01-15',
-            status: 'Pendiente',
-            notes: 'Incluir nuevos empleados',
-            priority: 'Alta',
-            amount: '3200',
-            responsible: 'RRHH',
-            completedDate: ''
+            empresa: 'Constructora DEF S.A.',
+            abreviatura: 'DEF',
+            responsable: 'Carlos Rodríguez',
+            entidad: 'ESSALUD',
+            obligacion: 'Contribuciones Sociales',
+            periodo: 'dic',
+            ano: '2024',
+            fechaLimite: '2025-01-15',
+            estado: 'Pendiente',
+            periodoConcat: 'dic-2024'
         },
         {
             rowIndex: 5,
-            entity: 'SUNAT',
-            type: 'PDT',
-            description: 'Presentación de PDT 621',
-            dueDate: '2025-01-17',
-            status: 'Completado',
-            notes: 'Presentado correctamente',
-            priority: 'Media',
-            amount: '2500',
-            responsible: 'Contador',
-            completedDate: '2025-01-16'
+            empresa: 'Comercial GHI S.R.L.',
+            abreviatura: 'GHI',
+            responsable: 'Ana López',
+            entidad: 'SUNAT',
+            obligacion: 'PDT 621',
+            periodo: 'nov',
+            ano: '2024',
+            fechaLimite: '2025-01-17',
+            estado: 'Completado',
+            periodoConcat: 'nov-2024'
         },
         {
             rowIndex: 6,
-            entity: 'Municipalidad',
-            type: 'Licencias',
-            description: 'Renovación de licencia municipal',
-            dueDate: '2025-01-20',
-            status: 'Vencido',
-            notes: 'Pendiente de documentos',
-            priority: 'Crítica',
-            amount: '850',
-            responsible: 'Legal',
-            completedDate: ''
+            empresa: 'Distribuidora JKL S.A.C.',
+            abreviatura: 'JKL',
+            responsable: 'Roberto Silva',
+            entidad: 'Municipalidad de Lima',
+            obligacion: 'Licencia de Funcionamiento',
+            periodo: 'anual',
+            ano: '2024',
+            fechaLimite: '2025-01-20',
+            estado: 'Vencido',
+            periodoConcat: 'anual-2024'
         }
     ];
 
@@ -568,9 +520,9 @@ function setupFilters() {
     const statuses = new Set();
 
     appState.data.forEach(item => {
-        if (item.entity) entities.add(item.entity);
-        if (item.type) types.add(item.type);
-        if (item.status) statuses.add(item.status);
+        if (item.entidad) entities.add(item.entidad);
+        if (item.obligacion) types.add(item.obligacion);
+        if (item.estado) statuses.add(item.estado);
     });
 
     createFilterCheckboxes('entityFilters', entities, 'entities');
@@ -667,14 +619,16 @@ function applyFilters() {
     const selectedStatuses = getSelectedFilters('statuses');
 
     appState.filteredData = appState.data.filter(item => {
-        return selectedEntities.has(item.entity) &&
-               selectedTypes.has(item.type) &&
-               selectedStatuses.has(item.status);
+        return selectedEntities.has(item.entidad) &&
+               selectedTypes.has(item.obligacion) &&
+               selectedStatuses.has(item.estado);
     });
 
     renderTable();
     updateCalendar();
     updateStats();
+    
+    AlertManager.info(`${appState.filteredData.length} registros después del filtro`);
 }
 
 // Get selected filters
@@ -696,14 +650,16 @@ function renderTable() {
     appState.filteredData.forEach(item => {
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>${item.entity}</td>
-            <td>${item.type}</td>
-            <td>${item.description}</td>
-            <td>${formatDate(item.dueDate)}</td>
+            <td>${item.empresa}</td>
+            <td>${item.abreviatura}</td>
+            <td>${item.responsable}</td>
+            <td>${item.entidad}</td>
+            <td>${item.obligacion}</td>
+            <td>${item.periodoConcat}</td>
+            <td>${formatDate(item.fechaLimite)}</td>
             <td class="status-cell">
-                <span class="status status--${getStatusClass(item.status)}">${item.status}</span>
+                <span class="status status--${getStatusClass(item.estado)}">${item.estado}</span>
             </td>
-            <td>${item.notes}</td>
             <td class="table-actions">
                 <button class="btn btn--sm btn--outline btn-icon" onclick="editRecord(${item.rowIndex})" title="Editar">
                     ✏️
@@ -771,16 +727,18 @@ function updateCalendar() {
     }
 }
 
-// Get calendar events
+// Get calendar events - Using fechaLimite (column H)
 function getCalendarEvents() {
     return appState.filteredData.map(item => ({
-        title: `${item.entity} - ${item.type}`,
-        date: item.dueDate,
-        color: getEventColor(item.status),
+        title: `${item.entidad} - ${item.obligacion}`,
+        date: item.fechaLimite, // Using Fecha límite presentación
+        color: getEventColor(item.estado),
         extendedProps: {
             rowIndex: item.rowIndex,
-            description: item.description,
-            status: item.status
+            description: item.obligacion,
+            status: item.estado,
+            empresa: item.empresa,
+            periodo: item.periodoConcat
         }
     }));
 }
@@ -808,17 +766,17 @@ function updateStats() {
     today.setHours(0, 0, 0, 0);
     
     const upcoming = appState.filteredData.filter(item => {
-        if (!item.dueDate) return false;
-        const dueDate = new Date(item.dueDate);
+        if (!item.fechaLimite) return false;
+        const dueDate = new Date(item.fechaLimite);
         const diffTime = dueDate - today;
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        return diffDays >= 0 && diffDays <= 7 && item.status !== 'Completado';
+        return diffDays >= 0 && diffDays <= 7 && item.estado !== 'Completado';
     }).length;
     
     const overdue = appState.filteredData.filter(item => {
-        if (!item.dueDate) return false;
-        const dueDate = new Date(item.dueDate);
-        return dueDate < today && item.status !== 'Completado';
+        if (!item.fechaLimite) return false;
+        const dueDate = new Date(item.fechaLimite);
+        return dueDate < today && item.estado !== 'Completado';
     }).length;
 
     totalEl.textContent = total;
@@ -836,14 +794,15 @@ window.editRecord = function(rowIndex) {
 
     appState.currentEditingRow = rowIndex;
     
-    // Populate modal
-    const fields = ['editEntity', 'editType', 'editDescription', 'editDueDate', 'editStatus', 'editNotes'];
-    const values = [record.entity, record.type, record.description, record.dueDate, record.status, record.notes];
-    
-    fields.forEach((fieldId, index) => {
-        const field = document.getElementById(fieldId);
-        if (field) field.value = values[index];
-    });
+    // Populate modal with correct field mappings
+    document.getElementById('editEmpresa').value = record.empresa || '';
+    document.getElementById('editAbreviatura').value = record.abreviatura || '';
+    document.getElementById('editResponsable').value = record.responsable || '';
+    document.getElementById('editEntidad').value = record.entidad || '';
+    document.getElementById('editObligacion').value = record.obligacion || '';
+    document.getElementById('editPeriodo').value = record.periodoConcat || '';
+    document.getElementById('editFechaLimite').value = record.fechaLimite || '';
+    document.getElementById('editEstado').value = record.estado || 'Pendiente';
 
     // Show modal
     const modal = document.getElementById('editModal');
@@ -876,7 +835,7 @@ function closeModal() {
     appState.currentEditingRow = null;
 }
 
-// Save record with correct sheet name
+// Save record
 async function saveRecord(e) {
     e.preventDefault();
     
@@ -888,13 +847,20 @@ async function saveRecord(e) {
     try {
         appState.setLoading(true);
 
+        const periodoConcat = document.getElementById('editPeriodo')?.value || '';
+        const { periodo, ano } = splitPeriodoConcat(periodoConcat);
+
         const updatedData = {
-            entity: document.getElementById('editEntity')?.value || '',
-            type: document.getElementById('editType')?.value || '',
-            description: document.getElementById('editDescription')?.value || '',
-            dueDate: document.getElementById('editDueDate')?.value || '',
-            status: document.getElementById('editStatus')?.value || 'Pendiente',
-            notes: document.getElementById('editNotes')?.value || ''
+            empresa: document.getElementById('editEmpresa')?.value || '',
+            abreviatura: document.getElementById('editAbreviatura')?.value || '',
+            responsable: document.getElementById('editResponsable')?.value || '',
+            entidad: document.getElementById('editEntidad')?.value || '',
+            obligacion: document.getElementById('editObligacion')?.value || '',
+            periodo: periodo,
+            ano: ano,
+            fechaLimite: document.getElementById('editFechaLimite')?.value || '',
+            estado: document.getElementById('editEstado')?.value || 'Pendiente',
+            periodoConcat: periodoConcat
         };
 
         // Update local data
@@ -903,8 +869,8 @@ async function saveRecord(e) {
             Object.assign(appState.data[recordIndex], updatedData);
         }
 
-        // Save to Google Sheets if connected (using detected sheet name)
-        if (appState.isSignedIn && appState.detectedSheetName) {
+        // Save to Google Sheets if connected
+        if (appState.isSignedIn) {
             await safeGoogleSheetsUpdate(appState.currentEditingRow, updatedData);
         }
 
@@ -929,24 +895,31 @@ async function saveRecord(e) {
     }
 }
 
-// FIXED: Safe Google Sheets update with correct sheet name
+// Safe Google Sheets update with error handling - Updated for correct columns
 async function safeGoogleSheetsUpdate(rowIndex, data) {
     try {
         const values = [
-            [data.entity, data.type, data.description, data.dueDate, data.status, data.notes]
+            [
+                data.empresa,        // Column A
+                data.abreviatura,    // Column B  
+                data.responsable,    // Column C
+                data.entidad,        // Column D
+                data.obligacion,     // Column E
+                data.periodo,        // Column F
+                data.ano,            // Column G
+                data.fechaLimite,    // Column H
+                data.estado          // Column I
+            ]
         ];
-
-        const sheetName = appState.detectedSheetName || CONFIG.CURRENT_SHEET_NAME;
-        const range = `${sheetName}!A${rowIndex}:F${rowIndex}`;
 
         await gapi.client.sheets.spreadsheets.values.update({
             spreadsheetId: CONFIG.SPREADSHEET_ID,
-            range: range,
+            range: `DATA!A${rowIndex}:I${rowIndex}`,
             valueInputOption: 'USER_ENTERED',
             resource: { values }
         });
         
-        console.log(`Successfully updated Google Sheets at ${range}`);
+        console.log('Successfully updated Google Sheets');
     } catch (error) {
         console.error('Error updating Google Sheets:', error);
         AlertManager.warning('Cambio guardado localmente. Error al sincronizar con Google Sheets.');
@@ -985,5 +958,21 @@ document.addEventListener('DOMContentLoaded', function() {
     // Try to initialize Google APIs in background
     setTimeout(() => {
         initializeGoogleAPIs();
-    }, 1000); // Increased delay to ensure all scripts are loaded
+    }, 500);
 });
+
+// Add CSS for slideOut animation
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideOut {
+        from {
+            transform: translateX(0);
+            opacity: 1;
+        }
+        to {
+            transform: translateX(100%);
+            opacity: 0;
+        }
+    }
+`;
+document.head.appendChild(style);

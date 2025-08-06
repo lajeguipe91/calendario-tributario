@@ -1,12 +1,15 @@
-// Google Sheets Tax Calendar Application - Fixed Version
-// Production Configuration
+// Google Sheets Tax Calendar Application - Fixed Version with DATA sheet and OAuth fixes
+// Production Configuration with corrected sheet name
 const CONFIG = {
     API_KEY: 'AIzaSyBdlizVp_hOembaoFJYE_rKHCvFtn9asok',
     CLIENT_ID: '341125602004-36tl0jfhtd7ce21csjun41fel085res8.apps.googleusercontent.com',
     SPREADSHEET_ID: '10L6aSKz8oPtq4ZpXcO921vCIciHWlCRqo_w5pAHc3yo',
     DISCOVERY_DOC: 'https://sheets.googleapis.com/$discovery/rest?version=v4',
     SCOPES: 'https://www.googleapis.com/auth/spreadsheets',
-    RANGE: 'Sheet1!A:J'
+    // CRITICAL FIX: Updated possible sheet names with DATA as primary
+    POSSIBLE_SHEET_NAMES: ['DATA', 'Calendario', 'Sheet1', 'Hoja1', 'CALENDARIO OBLIGACIONES HOLDING'],
+    CURRENT_SHEET_NAME: 'DATA', // Default to DATA
+    RANGE: 'DATA!A:J' // Default range using DATA sheet
 };
 
 // Global State Management
@@ -27,6 +30,8 @@ class AppState {
         this.currentEditingRow = null;
         this.initializationAttempts = 0;
         this.maxInitAttempts = 3;
+        this.detectedSheetName = null;
+        this.tokenClient = null;
     }
 
     setLoading(loading) {
@@ -124,7 +129,49 @@ class AlertManager {
     }
 }
 
-// Google APIs Initialization
+// Wait for Google APIs to load
+function waitForGoogleAPI() {
+    return new Promise((resolve, reject) => {
+        let attempts = 0;
+        const maxAttempts = 100; // 10 seconds
+        
+        const checkAPI = () => {
+            attempts++;
+            if (typeof gapi !== 'undefined' && gapi.load) {
+                resolve();
+            } else if (attempts >= maxAttempts) {
+                reject(new Error('Google API no se cargó'));
+            } else {
+                setTimeout(checkAPI, 100);
+            }
+        };
+        
+        checkAPI();
+    });
+}
+
+// Wait for Google GSI to load
+function waitForGoogleGSI() {
+    return new Promise((resolve, reject) => {
+        let attempts = 0;
+        const maxAttempts = 100; // 10 seconds
+        
+        const checkGSI = () => {
+            attempts++;
+            if (typeof google !== 'undefined' && google.accounts && google.accounts.oauth2) {
+                resolve();
+            } else if (attempts >= maxAttempts) {
+                reject(new Error('Google GSI no se cargó'));
+            } else {
+                setTimeout(checkGSI, 100);
+            }
+        };
+        
+        checkGSI();
+    });
+}
+
+// FIXED: Google APIs Initialization with better error handling and OAuth setup
 async function initializeGoogleAPIs() {
     try {
         console.log('Initializing Google APIs... Attempt:', appState.initializationAttempts + 1);
@@ -136,77 +183,44 @@ async function initializeGoogleAPIs() {
             throw new Error('Se agotaron los intentos de conexión');
         }
 
-        // Wait for gapi to be available with timeout
-        let gapiReady = false;
-        let attempts = 0;
-        const maxAttempts = 50; // 5 seconds total
+        // Wait for Google API to be available
+        await waitForGoogleAPI();
+        console.log('Google API disponible');
 
-        while (!gapiReady && attempts < maxAttempts) {
-            if (typeof gapi !== 'undefined') {
-                gapiReady = true;
-                break;
-            }
-            await new Promise(resolve => setTimeout(resolve, 100));
-            attempts++;
-        }
+        // Initialize gapi client
+        await new Promise((resolve, reject) => {
+            gapi.load('client', {
+                callback: resolve,
+                onerror: reject
+            });
+        });
 
-        if (!gapiReady) {
-            throw new Error('Google API library no disponible');
-        }
-
-        // Initialize gapi with timeout
-        await Promise.race([
-            new Promise((resolve, reject) => {
-                gapi.load('client', {
-                    callback: resolve,
-                    onerror: () => reject(new Error('Error cargando cliente GAPI'))
-                });
-            }),
-            new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout cargando GAPI')), 5000)
-            )
-        ]);
-
-        await Promise.race([
-            gapi.client.init({
-                apiKey: CONFIG.API_KEY,
-                discoveryDocs: [CONFIG.DISCOVERY_DOC],
-            }),
-            new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout inicializando cliente GAPI')), 5000)
-            )
-        ]);
+        await gapi.client.init({
+            apiKey: CONFIG.API_KEY,
+            discoveryDocs: [CONFIG.DISCOVERY_DOC],
+        });
 
         appState.gapiInited = true;
         console.log('GAPI initialized successfully');
 
-        // Initialize Google Sign-In
-        let googleAccountsReady = false;
-        attempts = 0;
+        // Wait for Google GSI to be available
+        try {
+            await waitForGoogleGSI();
+            console.log('Google GSI disponible');
 
-        while (!googleAccountsReady && attempts < maxAttempts) {
-            if (typeof google !== 'undefined' && google.accounts) {
-                googleAccountsReady = true;
-                break;
-            }
-            await new Promise(resolve => setTimeout(resolve, 100));
-            attempts++;
-        }
+            // FIXED: Initialize OAuth2 token client properly
+            appState.tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CONFIG.CLIENT_ID,
+                scope: CONFIG.SCOPES,
+                prompt: '', // Don't always show consent screen
+                callback: handleOAuthCallback,
+                error_callback: handleOAuthError
+            });
 
-        if (googleAccountsReady) {
-            try {
-                google.accounts.id.initialize({
-                    client_id: CONFIG.CLIENT_ID,
-                    callback: handleCredentialResponse,
-                });
-                appState.gsiInited = true;
-                console.log('GSI initialized successfully');
-            } catch (gsiError) {
-                console.warn('GSI initialization failed, but continuing:', gsiError);
-                appState.gsiInited = false;
-            }
-        } else {
-            console.warn('Google Sign-In library not available, but continuing');
+            appState.gsiInited = true;
+            console.log('GSI initialized successfully');
+        } catch (gsiError) {
+            console.warn('GSI initialization failed:', gsiError);
             appState.gsiInited = false;
         }
 
@@ -227,11 +241,57 @@ async function initializeGoogleAPIs() {
     }
 }
 
-// Handle credential response
-function handleCredentialResponse(response) {
-    console.log('Credential response received');
-    // For this implementation, we'll use the simpler OAuth flow
-    handleAuthClick();
+// FIXED: OAuth callback handler
+async function handleOAuthCallback(response) {
+    try {
+        console.log('OAuth callback received:', response);
+        
+        if (response.error) {
+            throw new Error('OAuth error: ' + response.error);
+        }
+
+        if (!response.access_token) {
+            throw new Error('No se recibió token de acceso');
+        }
+
+        // Set the access token for gapi client
+        gapi.client.setToken({
+            access_token: response.access_token
+        });
+
+        appState.isSignedIn = true;
+        updateAuthUI();
+        appState.updateConnectionStatus('success', 'Conectado a Google Sheets');
+        
+        // Load spreadsheet data
+        await loadSpreadsheetData();
+        AlertManager.success('Conectado exitosamente a Google Sheets');
+        
+    } catch (error) {
+        console.error('OAuth callback error:', error);
+        appState.isSignedIn = false;
+        updateAuthUI();
+        appState.updateConnectionStatus('error', 'Error de autorización');
+        AlertManager.error('Error en la autorización: ' + error.message);
+    } finally {
+        appState.setLoading(false);
+    }
+}
+
+// FIXED: OAuth error handler
+function handleOAuthError(error) {
+    console.error('OAuth error:', error);
+    appState.setLoading(false);
+    appState.isSignedIn = false;
+    updateAuthUI();
+    
+    if (error.type === 'popup_closed') {
+        appState.updateConnectionStatus('error', 'Ventana de autenticación cerrada');
+        AlertManager.warning('Ventana de autenticación cerrada. Inténtalo de nuevo.');
+    } else {
+        appState.updateConnectionStatus('error', 'Error de autorización');
+        AlertManager.error('Error en la autorización. Usando datos de demostración.');
+    }
 }
 
 // Setup auth button
@@ -257,10 +317,15 @@ function setupAuthButton() {
     updateAuthUI();
 }
 
-// Handle authorization
+// FIXED: Handle authorization with better error handling
 async function handleAuthClick() {
     if (!appState.gapiInited) {
         AlertManager.error('Las APIs de Google no están inicializadas');
+        return;
+    }
+
+    if (!appState.tokenClient) {
+        AlertManager.error('Cliente OAuth no está inicializado');
         return;
     }
 
@@ -268,51 +333,17 @@ async function handleAuthClick() {
         appState.setLoading(true);
         appState.updateConnectionStatus('loading', 'Autenticando...');
 
-        // Check if google.accounts.oauth2 is available
-        if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
-            throw new Error('OAuth library no disponible');
-        }
-
-        // Create a token client
-        const tokenClient = google.accounts.oauth2.initTokenClient({
-            client_id: CONFIG.CLIENT_ID,
-            scope: CONFIG.SCOPES,
-            callback: async (response) => {
-                try {
-                    if (response.error) {
-                        throw new Error('Authorization failed: ' + response.error);
-                    }
-                    
-                    console.log('Authorization successful');
-                    appState.isSignedIn = true;
-                    updateAuthUI();
-                    appState.updateConnectionStatus('success', 'Conectado a Google Sheets');
-                    
-                    await loadSpreadsheetData();
-                    AlertManager.success('Conectado exitosamente a Google Sheets');
-                } catch (callbackError) {
-                    console.error('Authorization callback error:', callbackError);
-                    AlertManager.error('Error en la autorización: ' + callbackError.message);
-                    appState.updateConnectionStatus('error', 'Error de autorización');
-                } finally {
-                    appState.setLoading(false);
-                }
-            },
-            error_callback: (error) => {
-                console.error('Authorization error:', error);
-                appState.setLoading(false);
-                appState.updateConnectionStatus('error', 'Error de autorización');
-                AlertManager.error('Error en la autorización. Usando datos de demostración.');
-            }
-        });
-
-        tokenClient.requestAccessToken();
-
+        // FIXED: Request access token with proper error handling
+        console.log('Requesting access token...');
+        appState.tokenClient.requestAccessToken();
+        
+        // Note: The actual handling is done in the callback functions
+        
     } catch (error) {
-        console.error('Auth error:', error);
+        console.error('Auth click error:', error);
         appState.setLoading(false);
         appState.updateConnectionStatus('error', 'Error de autenticación');
-        AlertManager.error('Error de autenticación: ' + error.message + '. Usando datos de demostración.');
+        AlertManager.error('Error de autenticación: ' + error.message);
     }
 }
 
@@ -321,7 +352,9 @@ function handleSignoutClick() {
     try {
         const token = gapi.client.getToken();
         if (token !== null) {
-            google.accounts.oauth2.revoke(token.access_token);
+            google.accounts.oauth2.revoke(token.access_token, () => {
+                console.log('Token revoked');
+            });
             gapi.client.setToken('');
         }
     } catch (error) {
@@ -331,6 +364,7 @@ function handleSignoutClick() {
     appState.isSignedIn = false;
     appState.data = [];
     appState.filteredData = [];
+    appState.detectedSheetName = null;
     
     updateAuthUI();
     clearAllData();
@@ -357,20 +391,49 @@ function updateAuthUI() {
     }
 }
 
-// Load spreadsheet data
+// CRITICAL FIX: Detect correct sheet name and load data
 async function loadSpreadsheetData() {
     try {
         console.log('Loading spreadsheet data...');
         appState.setLoading(true);
+        appState.updateConnectionStatus('loading', 'Detectando hoja de cálculo...');
 
-        const response = await gapi.client.sheets.spreadsheets.values.get({
-            spreadsheetId: CONFIG.SPREADSHEET_ID,
-            range: CONFIG.RANGE,
-        });
+        let response = null;
+        let successfulSheetName = null;
+
+        // Try each possible sheet name
+        for (const sheetName of CONFIG.POSSIBLE_SHEET_NAMES) {
+            try {
+                console.log(`Trying sheet name: ${sheetName}`);
+                appState.updateConnectionStatus('loading', `Probando hoja: ${sheetName}...`);
+
+                const range = `${sheetName}!A:J`;
+                response = await gapi.client.sheets.spreadsheets.values.get({
+                    spreadsheetId: CONFIG.SPREADSHEET_ID,
+                    range: range,
+                });
+
+                if (response && response.result && response.result.values) {
+                    successfulSheetName = sheetName;
+                    appState.detectedSheetName = sheetName;
+                    CONFIG.CURRENT_SHEET_NAME = sheetName;
+                    CONFIG.RANGE = range;
+                    console.log(`Successfully connected to sheet: ${sheetName}`);
+                    break;
+                }
+            } catch (sheetError) {
+                console.log(`Failed to load from sheet ${sheetName}:`, sheetError.result?.error?.message || sheetError.message);
+                continue;
+            }
+        }
+
+        if (!response || !successfulSheetName) {
+            throw new Error('No se pudo encontrar ninguna hoja válida en el documento');
+        }
 
         const rows = response.result.values;
         if (!rows || rows.length === 0) {
-            throw new Error('No se encontraron datos en la hoja de cálculo');
+            throw new Error(`No se encontraron datos en la hoja ${successfulSheetName}`);
         }
 
         // Process data (skip header row)
@@ -389,15 +452,18 @@ async function loadSpreadsheetData() {
             completedDate: row[9] || ''
         }));
 
-        console.log(`Loaded ${appState.data.length} records`);
+        console.log(`Loaded ${appState.data.length} records from sheet: ${successfulSheetName}`);
         appState.filteredData = [...appState.data];
         
         initializeInterface();
-        AlertManager.success(`${appState.data.length} obligaciones cargadas desde Google Sheets`);
+        appState.updateConnectionStatus('success', `Conectado a hoja: ${successfulSheetName}`);
+        AlertManager.success(`${appState.data.length} obligaciones cargadas desde la hoja ${successfulSheetName}`);
 
     } catch (error) {
         console.error('Error loading data:', error);
-        AlertManager.error('Error al cargar datos de Google Sheets: ' + error.message + '. Usando datos de demostración.');
+        const errorMessage = error.result?.error?.message || error.message;
+        appState.updateConnectionStatus('error', `Error cargando datos: ${errorMessage}`);
+        AlertManager.error('Error al cargar datos de Google Sheets: ' + errorMessage + '. Usando datos de demostración.');
         
         // Load demo data as fallback
         loadDemoData();
@@ -609,8 +675,6 @@ function applyFilters() {
     renderTable();
     updateCalendar();
     updateStats();
-    
-    AlertManager.info(`${appState.filteredData.length} registros después del filtro`);
 }
 
 // Get selected filters
@@ -812,7 +876,7 @@ function closeModal() {
     appState.currentEditingRow = null;
 }
 
-// Save record
+// Save record with correct sheet name
 async function saveRecord(e) {
     e.preventDefault();
     
@@ -839,8 +903,8 @@ async function saveRecord(e) {
             Object.assign(appState.data[recordIndex], updatedData);
         }
 
-        // Save to Google Sheets if connected
-        if (appState.isSignedIn) {
+        // Save to Google Sheets if connected (using detected sheet name)
+        if (appState.isSignedIn && appState.detectedSheetName) {
             await safeGoogleSheetsUpdate(appState.currentEditingRow, updatedData);
         }
 
@@ -865,21 +929,24 @@ async function saveRecord(e) {
     }
 }
 
-// Safe Google Sheets update with error handling
+// FIXED: Safe Google Sheets update with correct sheet name
 async function safeGoogleSheetsUpdate(rowIndex, data) {
     try {
         const values = [
             [data.entity, data.type, data.description, data.dueDate, data.status, data.notes]
         ];
 
+        const sheetName = appState.detectedSheetName || CONFIG.CURRENT_SHEET_NAME;
+        const range = `${sheetName}!A${rowIndex}:F${rowIndex}`;
+
         await gapi.client.sheets.spreadsheets.values.update({
             spreadsheetId: CONFIG.SPREADSHEET_ID,
-            range: `Sheet1!A${rowIndex}:F${rowIndex}`,
+            range: range,
             valueInputOption: 'USER_ENTERED',
             resource: { values }
         });
         
-        console.log('Successfully updated Google Sheets');
+        console.log(`Successfully updated Google Sheets at ${range}`);
     } catch (error) {
         console.error('Error updating Google Sheets:', error);
         AlertManager.warning('Cambio guardado localmente. Error al sincronizar con Google Sheets.');
@@ -918,21 +985,5 @@ document.addEventListener('DOMContentLoaded', function() {
     // Try to initialize Google APIs in background
     setTimeout(() => {
         initializeGoogleAPIs();
-    }, 500);
+    }, 1000); // Increased delay to ensure all scripts are loaded
 });
-
-// Add CSS for slideOut animation
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideOut {
-        from {
-            transform: translateX(0);
-            opacity: 1;
-        }
-        to {
-            transform: translateX(100%);
-            opacity: 0;
-        }
-    }
-`;
-document.head.appendChild(style);

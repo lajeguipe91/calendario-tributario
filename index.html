@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Calendario Fiscal - Obligaciones Tributarias</title>
     
-    <!-- FullCalendar CSS - Using unpkg to avoid MIME type issues -->
+    <!-- FullCalendar CSS -->
     <link href="https://unpkg.com/fullcalendar@6.1.10/index.global.min.css" rel="stylesheet">
     
     <!-- Custom CSS -->
@@ -29,6 +29,9 @@
             <div class="header-content">
                 <h1>Calendario Fiscal</h1>
                 <div class="header-actions">
+                    <button id="refreshBtn" class="btn btn--outline">
+                        🔄 Actualizar datos
+                    </button>
                     <button id="authBtn" class="btn btn--primary">
                         <span id="authText">Conectar a Google</span>
                     </button>
@@ -39,7 +42,7 @@
     </header>
 
     <!-- Loading Overlay -->
-    <div id="loadingOverlay" class="loading-overlay">
+    <div id="loadingOverlay" class="loading-overlay hidden">
         <div class="loading-content">
             <div class="loading-spinner"></div>
             <p>Cargando datos fiscales...</p>
@@ -53,32 +56,44 @@
             <section class="filters-section">
                 <div class="card">
                     <div class="card__body">
-                        <h3>Filtros</h3>
-                        <div class="filters-grid">
-                            <div class="filter-group">
-                                <label class="form-label">Entidad</label>
-                                <div class="filter-container">
-                                    <input type="text" id="entitySearch" class="form-control filter-search" placeholder="Buscar entidad...">
-                                    <div id="entityFilters" class="filter-checkboxes"></div>
-                                </div>
-                            </div>
-                            <div class="filter-group">
-                                <label class="form-label">Tipo de Obligación</label>
-                                <div class="filter-container">
-                                    <input type="text" id="typeSearch" class="form-control filter-search" placeholder="Buscar tipo...">
-                                    <div id="typeFilters" class="filter-checkboxes"></div>
-                                </div>
-                            </div>
-                            <div class="filter-group">
-                                <label class="form-label">Estado</label>
-                                <div class="filter-container">
-                                    <div id="statusFilters" class="filter-checkboxes"></div>
-                                </div>
-                            </div>
+                        <div class="filters-header">
+                            <button id="toggleFiltersBtn" class="btn btn--outline">
+                                📊 Filtros
+                            </button>
                         </div>
-                        <div class="filter-actions">
-                            <button id="clearFilters" class="btn btn--outline">Limpiar Filtros</button>
-                            <button id="applyFilters" class="btn btn--primary">Aplicar Filtros</button>
+                        <div id="filtersPanel" class="filters-panel">
+                            <div class="filters-grid">
+                                <div class="filter-group">
+                                    <label class="form-label">Empresa</label>
+                                    <div class="filter-container">
+                                        <input type="text" id="empresaSearch" class="form-control filter-search" placeholder="Buscar empresa...">
+                                        <div id="empresaFilters" class="filter-checkboxes"></div>
+                                    </div>
+                                </div>
+                                <div class="filter-group">
+                                    <label class="form-label">Entidad</label>
+                                    <div class="filter-container">
+                                        <input type="text" id="entidadSearch" class="form-control filter-search" placeholder="Buscar entidad...">
+                                        <div id="entidadFilters" class="filter-checkboxes"></div>
+                                    </div>
+                                </div>
+                                <div class="filter-group">
+                                    <label class="form-label">Responsable</label>
+                                    <div class="filter-container">
+                                        <input type="text" id="responsableSearch" class="form-control filter-search" placeholder="Buscar responsable...">
+                                        <div id="responsableFilters" class="filter-checkboxes"></div>
+                                    </div>
+                                </div>
+                                <div class="filter-group">
+                                    <label class="form-label">Estado</label>
+                                    <div class="filter-container">
+                                        <div id="estadoFilters" class="filter-checkboxes"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="filter-actions">
+                                <button id="clearFilters" class="btn btn--outline">Limpiar Filtros</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -114,26 +129,49 @@
             <section class="table-section">
                 <div class="card">
                     <div class="card__body">
-                        <h3>Obligaciones Tributarias</h3>
-                        <div class="table-container">
-                            <table id="obligationsTable" class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Empresa</th>
-                                        <th>Abreviatura</th>
-                                        <th>Responsable</th>
-                                        <th>Entidad</th>
-                                        <th>Tipo de Obligación</th>
-                                        <th>Período</th>
-                                        <th>Fecha Límite</th>
-                                        <th>Estado</th>
-                                        <th>Acciones</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="tableBody">
-                                    <!-- Data will be populated here -->
-                                </tbody>
-                            </table>
+                        <div class="table-header">
+                            <h3>Obligaciones Tributarias</h3>
+                            <button id="toggleTableBtn" class="btn btn--outline">
+                                📋 Mostrar/Ocultar listado
+                            </button>
+                        </div>
+                        <div id="tablePanel" class="table-panel">
+                            <!-- Bulk Actions Bar -->
+                            <div id="bulkActionsBar" class="bulk-actions-bar hidden">
+                                <div class="bulk-actions-content">
+                                    <span id="selectedCount" class="selected-count">0 seleccionados</span>
+                                    <button id="bulkStatusBtn" class="btn btn--sm btn--primary">
+                                        🔄 Cambiar estado
+                                    </button>
+                                    <button id="clearSelectionBtn" class="btn btn--sm btn--outline">
+                                        ❌ Limpiar selección
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="table-container">
+                                <table id="obligationsTable" class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>
+                                                <input type="checkbox" id="selectAllCheckbox" title="Seleccionar todos">
+                                            </th>
+                                            <th>Empresa</th>
+                                            <th>Abreviatura</th>
+                                            <th>Responsable</th>
+                                            <th>Entidad</th>
+                                            <th>Obligación</th>
+                                            <th>Período</th>
+                                            <th>Fecha Límite</th>
+                                            <th>Estado</th>
+                                            <th>Acciones</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tableBody">
+                                        <!-- Data will be populated here -->
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -168,24 +206,27 @@
                             <input type="text" id="editEntidad" class="form-control" required>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Tipo de Obligación</label>
-                            <input type="text" id="editObligacion" class="form-control" required>
+                            <label class="form-label">Obligación</label>
+                            <textarea id="editObligacion" class="form-control" rows="3" required></textarea>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Período</label>
-                            <input type="text" id="editPeriodo" class="form-control" placeholder="ej: ene-feb-2025" required>
+                            <input type="text" id="editPeriodo" class="form-control" required>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Fecha Límite Presentación</label>
+                            <label class="form-label">Año</label>
+                            <input type="number" id="editAno" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Fecha Límite</label>
                             <input type="date" id="editFechaLimite" class="form-control" required>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Estado</label>
                             <select id="editEstado" class="form-control" required>
                                 <option value="Pendiente">Pendiente</option>
-                                <option value="Completado">Completado</option>
-                                <option value="Vencido">Vencido</option>
-                                <option value="En Proceso">En Proceso</option>
+                                <option value="Presentada">Presentada</option>
+                                <option value="No aplica">No aplica</option>
                             </select>
                         </div>
                     </form>
@@ -198,10 +239,41 @@
         </div>
     </div>
 
+    <!-- Bulk Status Change Modal -->
+    <div id="bulkStatusModal" class="modal hidden">
+        <div class="modal-overlay">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4>Cambiar Estado en Lote</h4>
+                    <button id="closeBulkModal" class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="bulkStatusForm">
+                        <div class="form-group">
+                            <label class="form-label">Nuevo Estado</label>
+                            <select id="bulkEstado" class="form-control" required>
+                                <option value="Pendiente">Pendiente</option>
+                                <option value="Presentada">Presentada</option>
+                                <option value="No aplica">No aplica</option>
+                            </select>
+                        </div>
+                        <p class="bulk-confirmation">
+                            Se actualizará el estado de <span id="bulkItemCount">0</span> registro(s) seleccionado(s).
+                        </p>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" id="cancelBulkEdit" class="btn btn--outline">Cancelar</button>
+                    <button type="submit" form="bulkStatusForm" id="saveBulkEdit" class="btn btn--primary">Aplicar Cambios</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Alert Container -->
     <div id="alertContainer" class="alert-container"></div>
 
-    <!-- Scripts - Load Google APIs first, then FullCalendar, then our app -->
+    <!-- Scripts -->
     <script src="https://apis.google.com/js/api.js" async defer></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://unpkg.com/fullcalendar@6.1.10/index.global.min.js"></script>

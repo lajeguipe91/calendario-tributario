@@ -849,9 +849,25 @@ select.form-control {
   margin-bottom: var(--space-24);
 }
 
+.filters-header {
+  margin-bottom: var(--space-16);
+}
+
+.filters-panel {
+  transition: all var(--duration-normal) var(--ease-standard);
+  overflow: hidden;
+}
+
+.filters-panel.collapsed {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  padding: 0;
+}
+
 .filters-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: var(--space-20);
   margin-bottom: var(--space-20);
 }
@@ -893,6 +909,13 @@ select.form-control {
 
 .filter-checkbox:hover {
   background-color: var(--color-secondary);
+}
+
+.filter-checkbox.select-all {
+  background-color: var(--color-bg-1);
+  font-weight: var(--font-weight-medium);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-4);
 }
 
 .filter-checkbox input[type="checkbox"] {
@@ -956,7 +979,7 @@ select.form-control {
   height: 600px;
 }
 
-/* FullCalendar Customizations */
+/* FullCalendar Customizations with Color Rules */
 .fc {
   font-family: var(--font-family-base);
   font-size: var(--font-size-sm);
@@ -970,24 +993,25 @@ select.form-control {
   font-weight: var(--font-weight-medium);
 }
 
-.fc-event.fc-event-pending {
-  background-color: var(--color-warning);
-  color: var(--color-background);
+/* Status Color Rules */
+.fc-event.fc-event-presentada {
+  background-color: #22c55e !important;
+  color: white !important;
 }
 
-.fc-event.fc-event-completed {
-  background-color: var(--color-success);
-  color: var(--color-background);
+.fc-event.fc-event-pendiente {
+  background-color: #f59e0b !important;
+  color: white !important;
 }
 
-.fc-event.fc-event-overdue {
-  background-color: var(--color-error);
-  color: var(--color-background);
+.fc-event.fc-event-no-aplica {
+  background-color: #6b7280 !important;
+  color: white !important;
 }
 
-.fc-event.fc-event-in-process {
-  background-color: var(--color-info);
-  color: var(--color-background);
+.fc-event.fc-event-vencida {
+  background-color: #ef4444 !important;
+  color: white !important;
 }
 
 .fc-daygrid-event-harness {
@@ -1035,13 +1059,86 @@ select.form-control {
   background-color: var(--color-secondary-hover);
 }
 
+/* List view colors */
+.fc-list-event-dot {
+  border-color: currentColor !important;
+}
+
+.fc-list-event.fc-event-presentada {
+  background-color: rgba(34, 197, 94, 0.1) !important;
+  border-left: 4px solid #22c55e !important;
+}
+
+.fc-list-event.fc-event-pendiente {
+  background-color: rgba(245, 158, 11, 0.1) !important;
+  border-left: 4px solid #f59e0b !important;
+}
+
+.fc-list-event.fc-event-no-aplica {
+  background-color: rgba(107, 114, 128, 0.1) !important;
+  border-left: 4px solid #6b7280 !important;
+}
+
+.fc-list-event.fc-event-vencida {
+  background-color: rgba(239, 68, 68, 0.1) !important;
+  border-left: 4px solid #ef4444 !important;
+}
+
 /* Table Section */
 .table-section {
   margin-bottom: var(--space-24);
 }
 
+.table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-16);
+}
+
+.table-panel {
+  transition: all var(--duration-normal) var(--ease-standard);
+  overflow: hidden;
+}
+
+.table-panel.collapsed {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.bulk-actions-bar {
+  background-color: var(--color-bg-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  padding: var(--space-12) var(--space-16);
+  margin-bottom: var(--space-16);
+  position: sticky;
+  top: 120px;
+  z-index: 50;
+}
+
+.bulk-actions-bar.hidden {
+  display: none;
+}
+
+.bulk-actions-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+.selected-count {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-primary);
+}
+
 .table-container {
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: 400px;
   border-radius: var(--radius-base);
   border: 1px solid var(--color-border);
 }
@@ -1057,6 +1154,7 @@ select.form-control {
   padding: var(--space-12) var(--space-16);
   text-align: left;
   border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
 }
 
 .data-table th {
@@ -1068,8 +1166,33 @@ select.form-control {
   z-index: 10;
 }
 
+.data-table tbody tr {
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
 .data-table tbody tr:hover {
   background-color: var(--color-secondary);
+}
+
+.data-table tbody tr.selected {
+  background-color: var(--color-bg-1);
+}
+
+/* Row colors based on status */
+.data-table tbody tr.status-presentada {
+  background-color: rgba(34, 197, 94, 0.05);
+}
+
+.data-table tbody tr.status-pendiente {
+  background-color: rgba(245, 158, 11, 0.05);
+}
+
+.data-table tbody tr.status-no-aplica {
+  background-color: rgba(107, 114, 128, 0.05);
+}
+
+.data-table tbody tr.status-vencida {
+  background-color: rgba(239, 68, 68, 0.1);
 }
 
 .data-table .status-cell {
@@ -1089,6 +1212,12 @@ select.form-control {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Row selection checkbox */
+.row-checkbox {
+  margin: 0;
+  cursor: pointer;
 }
 
 /* Modal */
@@ -1172,6 +1301,14 @@ select.form-control {
   gap: var(--space-12);
   padding: var(--space-20) var(--space-24);
   border-top: 1px solid var(--color-border);
+}
+
+.bulk-confirmation {
+  padding: var(--space-12);
+  background-color: var(--color-bg-2);
+  border-radius: var(--radius-base);
+  font-size: var(--font-size-sm);
+  margin-top: var(--space-12);
 }
 
 /* Alert System */
@@ -1258,9 +1395,23 @@ select.form-control {
     gap: var(--space-12);
   }
 
+  .header-actions {
+    flex-wrap: wrap;
+  }
+
   .calendar-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .table-header {
+    flex-direction: column;
+    gap: var(--space-12);
+  }
+
+  .bulk-actions-content {
+    flex-direction: column;
+    gap: var(--space-8);
   }
 
   .filters-grid {
@@ -1331,7 +1482,8 @@ select.form-control {
   .filters-section,
   .loading-overlay,
   .modal,
-  .alert-container {
+  .alert-container,
+  .bulk-actions-bar {
     display: none !important;
   }
 

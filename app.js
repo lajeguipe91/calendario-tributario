@@ -1,4 +1,4 @@
-// Google Sheets Tax Calendar Application - Fixed Column Mappings
+// Google Sheets Tax Calendar Application - Enhanced Version
 // Production Configuration
 const CONFIG = {
     API_KEY: 'AIzaSyBdlizVp_hOembaoFJYE_rKHCvFtn9asok',
@@ -19,14 +19,18 @@ class AppState {
         this.data = [];
         this.filteredData = [];
         this.filters = {
-            entities: new Set(),
-            types: new Set(),
-            statuses: new Set()
+            empresa: new Set(),
+            entidad: new Set(),
+            responsable: new Set(),
+            estado: new Set()
         };
         this.calendar = null;
         this.currentEditingRow = null;
+        this.selectedRows = new Set();
         this.initializationAttempts = 0;
         this.maxInitAttempts = 3;
+        this.filtersVisible = true;
+        this.tableVisible = true;
     }
 
     setLoading(loading) {
@@ -72,6 +76,45 @@ class AppState {
 
 // Global state instance
 const appState = new AppState();
+
+// Date parsing utility
+function parseDate(dateString) {
+    if (!dateString) return null;
+    
+    // Try different date formats
+    const formats = [
+        /^\d{4}-\d{2}-\d{2}$/, // YYYY-MM-DD
+        /^\d{2}\/\d{2}\/\d{4}$/, // DD/MM/YYYY
+        /^\d{1,2}\/\d{1,2}\/\d{4}$/, // D/M/YYYY or DD/M/YYYY
+    ];
+    
+    try {
+        // First try direct parsing
+        let date = new Date(dateString);
+        if (!isNaN(date.getTime())) {
+            return date;
+        }
+        
+        // Try DD/MM/YYYY format
+        if (formats[1].test(dateString) || formats[2].test(dateString)) {
+            const parts = dateString.split('/');
+            if (parts.length === 3) {
+                const day = parseInt(parts[0], 10);
+                const month = parseInt(parts[1], 10) - 1; // Month is 0-indexed
+                const year = parseInt(parts[2], 10);
+                date = new Date(year, month, day);
+                if (!isNaN(date.getTime())) {
+                    return date;
+                }
+            }
+        }
+        
+        return null;
+    } catch (error) {
+        console.warn('Error parsing date:', dateString, error);
+        return null;
+    }
+}
 
 // Alert System
 class AlertManager {
@@ -131,15 +174,14 @@ async function initializeGoogleAPIs() {
         appState.initializationAttempts++;
         appState.updateConnectionStatus('loading', 'Inicializando APIs de Google...');
 
-        // Check if we've exceeded max attempts
         if (appState.initializationAttempts > appState.maxInitAttempts) {
             throw new Error('Se agotaron los intentos de conexión');
         }
 
-        // Wait for gapi to be available with timeout
+        // Wait for gapi to be available
         let gapiReady = false;
         let attempts = 0;
-        const maxAttempts = 50; // 5 seconds total
+        const maxAttempts = 50;
 
         while (!gapiReady && attempts < maxAttempts) {
             if (typeof gapi !== 'undefined') {
@@ -154,7 +196,7 @@ async function initializeGoogleAPIs() {
             throw new Error('Google API library no disponible');
         }
 
-        // Initialize gapi with timeout
+        // Initialize gapi
         await Promise.race([
             new Promise((resolve, reject) => {
                 gapi.load('client', {
@@ -212,16 +254,12 @@ async function initializeGoogleAPIs() {
 
         appState.updateConnectionStatus('success', 'APIs de Google inicializadas correctamente');
         setupAuthButton();
-        
-        // Load demo data immediately to show something
         loadDemoData();
 
     } catch (error) {
         console.error('Error initializing Google APIs:', error);
         appState.updateConnectionStatus('error', `Error al inicializar: ${error.message}`);
         AlertManager.error(`Error al conectar con Google: ${error.message}`);
-        
-        // Load demo data as fallback
         setupAuthButton();
         loadDemoData();
     }
@@ -230,15 +268,17 @@ async function initializeGoogleAPIs() {
 // Handle credential response
 function handleCredentialResponse(response) {
     console.log('Credential response received');
-    // For this implementation, we'll use the simpler OAuth flow
     handleAuthClick();
 }
 
-// Setup auth button
+// Setup auth button and other UI controls
 function setupAuthButton() {
     const authBtn = document.getElementById('authBtn');
     const signoutBtn = document.getElementById('signoutBtn');
     const retryBtn = document.getElementById('retryBtn');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const toggleFiltersBtn = document.getElementById('toggleFiltersBtn');
+    const toggleTableBtn = document.getElementById('toggleTableBtn');
 
     if (authBtn) {
         authBtn.addEventListener('click', handleAuthClick);
@@ -249,12 +289,64 @@ function setupAuthButton() {
     if (retryBtn) {
         retryBtn.addEventListener('click', () => {
             appState.updateConnectionStatus('loading', 'Reintentando conexión...');
-            appState.initializationAttempts = 0; // Reset attempts
+            appState.initializationAttempts = 0;
             initializeGoogleAPIs();
         });
     }
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', refreshData);
+    }
+    if (toggleFiltersBtn) {
+        toggleFiltersBtn.addEventListener('click', toggleFilters);
+    }
+    if (toggleTableBtn) {
+        toggleTableBtn.addEventListener('click', toggleTable);
+    }
 
     updateAuthUI();
+}
+
+// Refresh data function
+async function refreshData() {
+    AlertManager.info('Actualizando datos...');
+    appState.setLoading(true);
+    try {
+        if (appState.isSignedIn) {
+            await loadSpreadsheetData();
+        } else {
+            loadDemoData();
+        }
+    } finally {
+        appState.setLoading(false);
+    }
+}
+
+// Toggle filters visibility
+function toggleFilters() {
+    const panel = document.getElementById('filtersPanel');
+    if (panel) {
+        appState.filtersVisible = !appState.filtersVisible;
+        if (appState.filtersVisible) {
+            panel.classList.remove('collapsed');
+        } else {
+            panel.classList.add('collapsed');
+        }
+        AlertManager.info(`Filtros ${appState.filtersVisible ? 'mostrados' : 'ocultos'}`);
+    }
+}
+
+// Toggle table visibility
+function toggleTable() {
+    const panel = document.getElementById('tablePanel');
+    if (panel) {
+        appState.tableVisible = !appState.tableVisible;
+        if (appState.tableVisible) {
+            panel.classList.remove('collapsed');
+        } else {
+            panel.classList.add('collapsed');
+        }
+        AlertManager.info(`Listado ${appState.tableVisible ? 'mostrado' : 'oculto'}`);
+    }
 }
 
 // Handle authorization
@@ -268,12 +360,10 @@ async function handleAuthClick() {
         appState.setLoading(true);
         appState.updateConnectionStatus('loading', 'Autenticando...');
 
-        // Check if google.accounts.oauth2 is available
         if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
             throw new Error('OAuth library no disponible');
         }
 
-        // Create a token client
         const tokenClient = google.accounts.oauth2.initTokenClient({
             client_id: CONFIG.CLIENT_ID,
             scope: CONFIG.SCOPES,
@@ -331,10 +421,11 @@ function handleSignoutClick() {
     appState.isSignedIn = false;
     appState.data = [];
     appState.filteredData = [];
+    appState.selectedRows.clear();
     
     updateAuthUI();
     clearAllData();
-    loadDemoData(); // Load demo data after signout
+    loadDemoData();
     appState.updateConnectionStatus('info', 'Desconectado de Google Sheets');
     AlertManager.info('Sesión cerrada. Mostrando datos de demostración.');
 }
@@ -357,29 +448,10 @@ function updateAuthUI() {
     }
 }
 
-// Helper function to concatenate period and year
-function createPeriodoConcat(periodo, ano) {
-    if (!periodo || !ano) return '';
-    return `${periodo}-${ano}`;
-}
-
-// Helper function to split concatenated period
-function splitPeriodoConcat(periodoConcat) {
-    if (!periodoConcat) return { periodo: '', ano: '' };
-    const parts = periodoConcat.split('-');
-    if (parts.length >= 2) {
-        const ano = parts[parts.length - 1];
-        const periodo = parts.slice(0, -1).join('-');
-        return { periodo, ano };
-    }
-    return { periodo: periodoConcat, ano: '' };
-}
-
 // Load spreadsheet data
 async function loadSpreadsheetData() {
     try {
         console.log('Loading spreadsheet data...');
-        appState.setLoading(true);
 
         const response = await gapi.client.sheets.spreadsheets.values.get({
             spreadsheetId: CONFIG.SPREADSHEET_ID,
@@ -388,111 +460,131 @@ async function loadSpreadsheetData() {
 
         const rows = response.result.values;
         if (!rows || rows.length === 0) {
-            throw new Error('No se encontraron datos en la hoja de cálculo');
+            throw new Error('No se encontraron datos en la hoja DATA');
         }
 
-        // Process data (skip header row) - Fixed column mappings
+        // Process data (skip header row)
         const headers = rows[0];
-        appState.data = rows.slice(1).map((row, index) => ({
-            rowIndex: index + 2, // +2 because we skip header and arrays are 0-indexed
-            empresa: row[0] || '',           // Column A
-            abreviatura: row[1] || '',       // Column B  
-            responsable: row[2] || '',       // Column C
-            entidad: row[3] || '',           // Column D (FIXED)
-            obligacion: row[4] || '',        // Column E (FIXED)
-            periodo: row[5] || '',           // Column F
-            ano: row[6] || '',               // Column G
-            fechaLimite: row[7] || '',       // Column H (FIXED - for calendar)
-            estado: row[8] || 'Pendiente',   // Column I (FIXED)
-            periodoConcat: createPeriodoConcat(row[5], row[6]) // Concatenated field
-        }));
-
-        console.log(`Loaded ${appState.data.length} records`);
-        appState.filteredData = [...appState.data];
+        let validRows = 0;
+        let invalidRows = 0;
         
+        appState.data = rows.slice(1).map((row, index) => {
+            const fechaLimite = parseDate(row[7] || '');
+            
+            if (!fechaLimite) {
+                invalidRows++;
+                console.warn(`Fila ${index + 2}: Fecha inválida "${row[7]}"`);
+            } else {
+                validRows++;
+            }
+
+            return {
+                rowIndex: index + 2,
+                empresa: row[0] || '',
+                abreviatura: row[1] || '',
+                responsable: row[2] || '',
+                entidad: row[3] || '',
+                obligacion: row[4] || '',
+                periodo: row[5] || '',
+                ano: row[6] || new Date().getFullYear().toString(),
+                fechaLimite: fechaLimite,
+                fechaLimiteString: row[7] || '',
+                estado: row[8] || 'Pendiente',
+                periodoCompleto: `${row[5] || ''}-${row[6] || new Date().getFullYear()}`
+            };
+        });
+
+        console.log(`Loaded ${appState.data.length} records (${validRows} valid, ${invalidRows} with date issues)`);
+        
+        if (invalidRows > 0) {
+            AlertManager.warning(`${invalidRows} registros tienen fechas inválidas y pueden no mostrarse correctamente en el calendario`);
+        }
+
+        appState.filteredData = [...appState.data];
         initializeInterface();
-        AlertManager.success(`${appState.data.length} obligaciones cargadas desde Google Sheets`);
+        AlertManager.success(`${validRows} obligaciones cargadas desde Google Sheets`);
 
     } catch (error) {
         console.error('Error loading data:', error);
         AlertManager.error('Error al cargar datos de Google Sheets: ' + error.message + '. Usando datos de demostración.');
-        
-        // Load demo data as fallback
         loadDemoData();
-    } finally {
-        appState.setLoading(false);
     }
 }
 
-// Load demo data as fallback
+// Load demo data
 function loadDemoData() {
     console.log('Loading demo data...');
     
     appState.data = [
         {
             rowIndex: 2,
-            empresa: 'Empresa ABC S.A.C.',
+            empresa: 'ABC Corp',
             abreviatura: 'ABC',
-            responsable: 'Juan Pérez',
+            responsable: 'Contador General',
             entidad: 'SUNAT',
-            obligacion: 'IGV Mensual',
-            periodo: 'ene-feb',
+            obligacion: 'Declaración mensual de IGV',
+            periodo: 'Enero',
             ano: '2025',
-            fechaLimite: '2025-01-12',
+            fechaLimite: new Date('2025-01-12'),
+            fechaLimiteString: '2025-01-12',
             estado: 'Pendiente',
-            periodoConcat: 'ene-feb-2025'
+            periodoCompleto: 'Enero-2025'
         },
         {
             rowIndex: 3,
-            empresa: 'Servicios XYZ E.I.R.L.',
+            empresa: 'XYZ Ltda',
             abreviatura: 'XYZ',
-            responsable: 'María González',
+            responsable: 'Gerente Financiero',
             entidad: 'SUNAT',
-            obligacion: 'Renta 3ra Categoría',
-            periodo: 'dic',
-            ano: '2024',
-            fechaLimite: '2025-01-12',
-            estado: 'En Proceso',
-            periodoConcat: 'dic-2024'
+            obligacion: 'Pago a cuenta de Impuesto a la Renta',
+            periodo: 'Enero',
+            ano: '2025',
+            fechaLimite: new Date('2025-01-12'),
+            fechaLimiteString: '2025-01-12',
+            estado: 'Presentada',
+            periodoCompleto: 'Enero-2025'
         },
         {
             rowIndex: 4,
-            empresa: 'Constructora DEF S.A.',
+            empresa: 'DEF S.A.',
             abreviatura: 'DEF',
-            responsable: 'Carlos Rodríguez',
+            responsable: 'RRHH',
             entidad: 'ESSALUD',
-            obligacion: 'Contribuciones Sociales',
-            periodo: 'dic',
-            ano: '2024',
-            fechaLimite: '2025-01-15',
+            obligacion: 'Declaración y pago de contribuciones',
+            periodo: 'Enero',
+            ano: '2025',
+            fechaLimite: new Date('2025-01-15'),
+            fechaLimiteString: '2025-01-15',
             estado: 'Pendiente',
-            periodoConcat: 'dic-2024'
+            periodoCompleto: 'Enero-2025'
         },
         {
             rowIndex: 5,
-            empresa: 'Comercial GHI S.R.L.',
+            empresa: 'GHI Inc',
             abreviatura: 'GHI',
-            responsable: 'Ana López',
+            responsable: 'Contador',
             entidad: 'SUNAT',
-            obligacion: 'PDT 621',
-            periodo: 'nov',
+            obligacion: 'Presentación de PDT 621',
+            periodo: 'Diciembre',
             ano: '2024',
-            fechaLimite: '2025-01-17',
-            estado: 'Completado',
-            periodoConcat: 'nov-2024'
+            fechaLimite: new Date('2024-12-30'),
+            fechaLimiteString: '2024-12-30',
+            estado: 'Pendiente',
+            periodoCompleto: 'Diciembre-2024'
         },
         {
             rowIndex: 6,
-            empresa: 'Distribuidora JKL S.A.C.',
+            empresa: 'JKL Corp',
             abreviatura: 'JKL',
-            responsable: 'Roberto Silva',
-            entidad: 'Municipalidad de Lima',
-            obligacion: 'Licencia de Funcionamiento',
-            periodo: 'anual',
-            ano: '2024',
-            fechaLimite: '2025-01-20',
-            estado: 'Vencido',
-            periodoConcat: 'anual-2024'
+            responsable: 'Legal',
+            entidad: 'Municipalidad',
+            obligacion: 'Renovación de licencia municipal',
+            periodo: 'Anual',
+            ano: '2025',
+            fechaLimite: new Date('2025-01-20'),
+            fechaLimiteString: '2025-01-20',
+            estado: 'No aplica',
+            periodoCompleto: 'Anual-2025'
         }
     ];
 
@@ -502,7 +594,6 @@ function loadDemoData() {
     if (!appState.isSignedIn) {
         AlertManager.warning('Usando datos de demostración. Conéctate a Google Sheets para datos reales.');
     }
-    appState.setLoading(false);
 }
 
 // Initialize interface components
@@ -511,35 +602,59 @@ function initializeInterface() {
     renderTable();
     setupCalendar();
     updateStats();
+    setupBulkActions();
 }
 
-// Setup filters
+// Setup filters with unique values and select all
 function setupFilters() {
-    const entities = new Set();
-    const types = new Set();
-    const statuses = new Set();
+    const empresas = new Set();
+    const entidades = new Set();
+    const responsables = new Set();
+    const estados = new Set();
 
     appState.data.forEach(item => {
-        if (item.entidad) entities.add(item.entidad);
-        if (item.obligacion) types.add(item.obligacion);
-        if (item.estado) statuses.add(item.estado);
+        if (item.empresa) empresas.add(item.empresa);
+        if (item.entidad) entidades.add(item.entidad);
+        if (item.responsable) responsables.add(item.responsable);
+        if (item.estado) estados.add(item.estado);
     });
 
-    createFilterCheckboxes('entityFilters', entities, 'entities');
-    createFilterCheckboxes('typeFilters', types, 'types');
-    createFilterCheckboxes('statusFilters', statuses, 'statuses');
+    createFilterCheckboxes('empresaFilters', empresas, 'empresa');
+    createFilterCheckboxes('entidadFilters', entidades, 'entidad');
+    createFilterCheckboxes('responsableFilters', responsables, 'responsable');
+    createFilterCheckboxes('estadoFilters', estados, 'estado');
 
     setupFilterSearch();
     setupFilterActions();
 }
 
-// Create filter checkboxes
+// Create filter checkboxes with "Seleccionar todo" option
 function createFilterCheckboxes(containerId, items, filterType) {
     const container = document.getElementById(containerId);
     if (!container) return;
     
     container.innerHTML = '';
 
+    // Add "Seleccionar todo" checkbox
+    const selectAllDiv = document.createElement('div');
+    selectAllDiv.className = 'filter-checkbox select-all';
+    selectAllDiv.innerHTML = `
+        <input type="checkbox" id="${filterType}_select_all" value="__all__" checked>
+        <label for="${filterType}_select_all">Seleccionar todo</label>
+    `;
+    
+    const selectAllCheckbox = selectAllDiv.querySelector('input');
+    selectAllCheckbox.addEventListener('change', (e) => {
+        const isChecked = e.target.checked;
+        container.querySelectorAll('input[type="checkbox"]:not([value="__all__"])').forEach(cb => {
+            cb.checked = isChecked;
+        });
+        applyFilters();
+    });
+    
+    container.appendChild(selectAllDiv);
+
+    // Add individual item checkboxes
     Array.from(items).sort().forEach(item => {
         const div = document.createElement('div');
         div.className = 'filter-checkbox';
@@ -549,7 +664,19 @@ function createFilterCheckboxes(containerId, items, filterType) {
         `;
         
         const checkbox = div.querySelector('input');
-        checkbox.addEventListener('change', applyFilters);
+        checkbox.addEventListener('change', () => {
+            // Update "Seleccionar todo" state
+            const allCheckboxes = container.querySelectorAll('input[type="checkbox"]:not([value="__all__"])');
+            const checkedCheckboxes = container.querySelectorAll('input[type="checkbox"]:not([value="__all__"]):checked');
+            const selectAllCb = container.querySelector('input[value="__all__"]');
+            
+            if (selectAllCb) {
+                selectAllCb.checked = allCheckboxes.length === checkedCheckboxes.length;
+                selectAllCb.indeterminate = checkedCheckboxes.length > 0 && checkedCheckboxes.length < allCheckboxes.length;
+            }
+            
+            applyFilters();
+        });
         
         container.appendChild(div);
     });
@@ -557,15 +684,15 @@ function createFilterCheckboxes(containerId, items, filterType) {
 
 // Setup filter search
 function setupFilterSearch() {
-    const entitySearch = document.getElementById('entitySearch');
-    const typeSearch = document.getElementById('typeSearch');
-
-    if (entitySearch) {
-        entitySearch.addEventListener('input', (e) => filterCheckboxes('entityFilters', e.target.value));
-    }
-    if (typeSearch) {
-        typeSearch.addEventListener('input', (e) => filterCheckboxes('typeFilters', e.target.value));
-    }
+    const searches = ['empresaSearch', 'entidadSearch', 'responsableSearch'];
+    const containers = ['empresaFilters', 'entidadFilters', 'responsableFilters'];
+    
+    searches.forEach((searchId, index) => {
+        const searchElement = document.getElementById(searchId);
+        if (searchElement) {
+            searchElement.addEventListener('input', (e) => filterCheckboxes(containers[index], e.target.value));
+        }
+    });
 }
 
 // Filter checkboxes based on search
@@ -573,7 +700,7 @@ function filterCheckboxes(containerId, searchTerm) {
     const container = document.getElementById(containerId);
     if (!container) return;
     
-    const checkboxes = container.querySelectorAll('.filter-checkbox');
+    const checkboxes = container.querySelectorAll('.filter-checkbox:not(.select-all)');
     
     checkboxes.forEach(checkbox => {
         const label = checkbox.querySelector('label').textContent.toLowerCase();
@@ -585,13 +712,8 @@ function filterCheckboxes(containerId, searchTerm) {
 // Setup filter actions
 function setupFilterActions() {
     const clearBtn = document.getElementById('clearFilters');
-    const applyBtn = document.getElementById('applyFilters');
-
     if (clearBtn) {
         clearBtn.addEventListener('click', clearFilters);
-    }
-    if (applyBtn) {
-        applyBtn.addEventListener('click', applyFilters);
     }
 }
 
@@ -599,48 +721,51 @@ function setupFilterActions() {
 function clearFilters() {
     document.querySelectorAll('.filter-checkbox input[type="checkbox"]').forEach(checkbox => {
         checkbox.checked = true;
+        checkbox.indeterminate = false;
     });
+    
     document.querySelectorAll('.filter-search').forEach(search => {
         search.value = '';
     });
     
     // Reset filter visibility
-    document.querySelectorAll('.filter-checkbox').forEach(checkbox => {
+    document.querySelectorAll('.filter-checkbox:not(.select-all)').forEach(checkbox => {
         checkbox.style.display = 'flex';
     });
     
     applyFilters();
 }
 
-// Apply filters
+// Apply filters with live updates (removed excessive loading)
 function applyFilters() {
-    const selectedEntities = getSelectedFilters('entities');
-    const selectedTypes = getSelectedFilters('types');
-    const selectedStatuses = getSelectedFilters('statuses');
+    const selectedEmpresas = getSelectedFilters('empresa');
+    const selectedEntidades = getSelectedFilters('entidad');
+    const selectedResponsables = getSelectedFilters('responsable');
+    const selectedEstados = getSelectedFilters('estado');
 
     appState.filteredData = appState.data.filter(item => {
-        return selectedEntities.has(item.entidad) &&
-               selectedTypes.has(item.obligacion) &&
-               selectedStatuses.has(item.estado);
+        return selectedEmpresas.has(item.empresa) &&
+               selectedEntidades.has(item.entidad) &&
+               selectedResponsables.has(item.responsable) &&
+               selectedEstados.has(item.estado);
     });
 
     renderTable();
     updateCalendar();
     updateStats();
-    
-    AlertManager.info(`${appState.filteredData.length} registros después del filtro`);
+    updateBulkActionsBar();
 }
 
 // Get selected filters
 function getSelectedFilters(filterType) {
     const selected = new Set();
-    document.querySelectorAll(`input[id^="${filterType}_"]:checked`).forEach(checkbox => {
+    document.querySelectorAll(`input[id^="${filterType}_"]:checked:not([value="__all__"])`).forEach(checkbox => {
         selected.add(checkbox.value);
     });
     return selected;
 }
 
-// Render table
+// Render table with bulk selection
 function renderTable() {
     const tbody = document.getElementById('tableBody');
     if (!tbody) return;
@@ -648,14 +773,23 @@ function renderTable() {
     tbody.innerHTML = '';
 
     appState.filteredData.forEach(item => {
+        const statusClass = getStatusClassForRow(item);
+        const isSelected = appState.selectedRows.has(item.rowIndex);
+        
         const row = document.createElement('tr');
+        row.className = statusClass;
+        if (isSelected) row.classList.add('selected');
+        
         row.innerHTML = `
+            <td>
+                <input type="checkbox" class="row-checkbox" data-row-index="${item.rowIndex}" ${isSelected ? 'checked' : ''}>
+            </td>
             <td>${item.empresa}</td>
             <td>${item.abreviatura}</td>
             <td>${item.responsable}</td>
             <td>${item.entidad}</td>
             <td>${item.obligacion}</td>
-            <td>${item.periodoConcat}</td>
+            <td>${item.periodoCompleto}</td>
             <td>${formatDate(item.fechaLimite)}</td>
             <td class="status-cell">
                 <span class="status status--${getStatusClass(item.estado)}">${item.estado}</span>
@@ -666,32 +800,271 @@ function renderTable() {
                 </button>
             </td>
         `;
+        
+        // Add event listener for row checkbox
+        const checkbox = row.querySelector('.row-checkbox');
+        checkbox.addEventListener('change', (e) => {
+            const rowIndex = parseInt(e.target.dataset.rowIndex);
+            if (e.target.checked) {
+                appState.selectedRows.add(rowIndex);
+                row.classList.add('selected');
+            } else {
+                appState.selectedRows.delete(rowIndex);
+                row.classList.remove('selected');
+            }
+            updateBulkActionsBar();
+            updateSelectAllCheckbox();
+        });
+        
         tbody.appendChild(row);
     });
+    
+    updateSelectAllCheckbox();
+}
+
+// Get status class for table rows
+function getStatusClassForRow(item) {
+    if (!item.fechaLimite) return '';
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dueDate = new Date(item.fechaLimite);
+    dueDate.setHours(0, 0, 0, 0);
+    
+    const estado = item.estado.toLowerCase();
+    
+    if (estado === 'presentada') {
+        return 'status-presentada';
+    } else if (estado === 'no aplica') {
+        return 'status-no-aplica';
+    } else if (estado === 'pendiente') {
+        if (dueDate < today) {
+            return 'status-vencida';
+        } else {
+            return 'status-pendiente';
+        }
+    }
+    
+    return '';
 }
 
 // Format date for display
-function formatDate(dateString) {
-    if (!dateString) return '';
+function formatDate(date) {
+    if (!date) return '';
     try {
-        const date = new Date(dateString);
         return date.toLocaleDateString('es-ES');
     } catch {
-        return dateString;
+        return '';
     }
 }
 
 // Get status CSS class
 function getStatusClass(status) {
     switch (status?.toLowerCase()) {
-        case 'completado': return 'success';
-        case 'vencido': return 'error';
-        case 'en proceso': return 'warning';
+        case 'presentada': return 'success';
+        case 'no aplica': return 'info';
+        case 'pendiente': return 'warning';
         default: return 'info';
     }
 }
 
-// Setup calendar
+// Setup bulk actions
+function setupBulkActions() {
+    const selectAllCb = document.getElementById('selectAllCheckbox');
+    const bulkStatusBtn = document.getElementById('bulkStatusBtn');
+    const clearSelectionBtn = document.getElementById('clearSelectionBtn');
+    
+    if (selectAllCb) {
+        selectAllCb.addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            appState.selectedRows.clear();
+            
+            if (isChecked) {
+                appState.filteredData.forEach(item => {
+                    appState.selectedRows.add(item.rowIndex);
+                });
+            }
+            
+            document.querySelectorAll('.row-checkbox').forEach(cb => {
+                cb.checked = isChecked;
+            });
+            
+            document.querySelectorAll('#tableBody tr').forEach(row => {
+                if (isChecked) {
+                    row.classList.add('selected');
+                } else {
+                    row.classList.remove('selected');
+                }
+            });
+            
+            updateBulkActionsBar();
+        });
+    }
+    
+    if (bulkStatusBtn) {
+        bulkStatusBtn.addEventListener('click', showBulkStatusModal);
+    }
+    
+    if (clearSelectionBtn) {
+        clearSelectionBtn.addEventListener('click', clearSelection);
+    }
+    
+    setupBulkStatusModal();
+}
+
+// Update select all checkbox
+function updateSelectAllCheckbox() {
+    const selectAllCb = document.getElementById('selectAllCheckbox');
+    if (!selectAllCb) return;
+    
+    const totalVisible = appState.filteredData.length;
+    const selectedVisible = appState.filteredData.filter(item => 
+        appState.selectedRows.has(item.rowIndex)
+    ).length;
+    
+    selectAllCb.checked = totalVisible > 0 && selectedVisible === totalVisible;
+    selectAllCb.indeterminate = selectedVisible > 0 && selectedVisible < totalVisible;
+}
+
+// Update bulk actions bar - Fixed to show properly
+function updateBulkActionsBar() {
+    const bar = document.getElementById('bulkActionsBar');
+    const countSpan = document.getElementById('selectedCount');
+    
+    if (bar && countSpan) {
+        const selectedCount = appState.selectedRows.size;
+        
+        if (selectedCount > 0) {
+            bar.classList.remove('hidden');
+            countSpan.textContent = `${selectedCount} seleccionado${selectedCount !== 1 ? 's' : ''}`;
+            console.log('Bulk actions bar shown for', selectedCount, 'items');
+        } else {
+            bar.classList.add('hidden');
+        }
+    }
+}
+
+// Clear selection
+function clearSelection() {
+    appState.selectedRows.clear();
+    document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+    document.querySelectorAll('#tableBody tr').forEach(row => row.classList.remove('selected'));
+    updateBulkActionsBar();
+    updateSelectAllCheckbox();
+}
+
+// Show bulk status modal
+function showBulkStatusModal() {
+    const modal = document.getElementById('bulkStatusModal');
+    const countSpan = document.getElementById('bulkItemCount');
+    
+    if (modal && countSpan) {
+        countSpan.textContent = appState.selectedRows.size;
+        modal.classList.remove('hidden');
+    }
+}
+
+// Setup bulk status modal
+function setupBulkStatusModal() {
+    const modal = document.getElementById('bulkStatusModal');
+    const closeBtn = document.getElementById('closeBulkModal');
+    const cancelBtn = document.getElementById('cancelBulkEdit');
+    const form = document.getElementById('bulkStatusForm');
+
+    if (closeBtn) closeBtn.addEventListener('click', closeBulkStatusModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeBulkStatusModal);
+    
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeBulkStatusModal();
+        });
+    }
+
+    if (form) form.addEventListener('submit', saveBulkStatusChange);
+}
+
+// Close bulk status modal
+function closeBulkStatusModal() {
+    const modal = document.getElementById('bulkStatusModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+// Save bulk status change
+async function saveBulkStatusChange(e) {
+    e.preventDefault();
+    
+    const newStatus = document.getElementById('bulkEstado')?.value;
+    if (!newStatus || appState.selectedRows.size === 0) {
+        AlertManager.error('Selecciona un estado válido');
+        return;
+    }
+
+    try {
+        appState.setLoading(true);
+        
+        // Update local data
+        const updatedRows = [];
+        appState.selectedRows.forEach(rowIndex => {
+            const dataIndex = appState.data.findIndex(item => item.rowIndex === rowIndex);
+            if (dataIndex !== -1) {
+                appState.data[dataIndex].estado = newStatus;
+                updatedRows.push(rowIndex);
+            }
+        });
+        
+        // Update Google Sheets if connected
+        if (appState.isSignedIn && updatedRows.length > 0) {
+            await bulkUpdateGoogleSheets(updatedRows, newStatus);
+        }
+        
+        // Update filtered data
+        appState.filteredData.forEach(item => {
+            if (appState.selectedRows.has(item.rowIndex)) {
+                item.estado = newStatus;
+            }
+        });
+        
+        renderTable();
+        updateCalendar();
+        updateStats();
+        closeBulkStatusModal();
+        clearSelection();
+        
+        AlertManager.success(`Estado actualizado para ${updatedRows.length} registro${updatedRows.length !== 1 ? 's' : ''}`);
+
+    } catch (error) {
+        console.error('Error in bulk update:', error);
+        AlertManager.error('Error al actualizar estados: ' + error.message);
+    } finally {
+        appState.setLoading(false);
+    }
+}
+
+// Bulk update Google Sheets
+async function bulkUpdateGoogleSheets(rowIndexes, newStatus) {
+    try {
+        const requests = rowIndexes.map(rowIndex => ({
+            range: `DATA!I${rowIndex}:I${rowIndex}`,
+            values: [[newStatus]]
+        }));
+        
+        await gapi.client.sheets.spreadsheets.values.batchUpdate({
+            spreadsheetId: CONFIG.SPREADSHEET_ID,
+            resource: {
+                valueInputOption: 'USER_ENTERED',
+                data: requests
+            }
+        });
+        
+        console.log('Successfully updated Google Sheets in bulk');
+    } catch (error) {
+        console.error('Error updating Google Sheets in bulk:', error);
+        AlertManager.warning('Cambios guardados localmente. Error al sincronizar con Google Sheets.');
+        throw error;
+    }
+}
+
+// Setup calendar with enhanced color rules and event titles
 function setupCalendar() {
     const calendarEl = document.getElementById('calendar');
     if (!calendarEl || typeof FullCalendar === 'undefined') return;
@@ -727,30 +1100,55 @@ function updateCalendar() {
     }
 }
 
-// Get calendar events - Using fechaLimite (column H)
+// Get calendar events with enhanced color rules and titles
 function getCalendarEvents() {
-    return appState.filteredData.map(item => ({
-        title: `${item.entidad} - ${item.obligacion}`,
-        date: item.fechaLimite, // Using Fecha límite presentación
-        color: getEventColor(item.estado),
-        extendedProps: {
-            rowIndex: item.rowIndex,
-            description: item.obligacion,
-            status: item.estado,
-            empresa: item.empresa,
-            periodo: item.periodoConcat
-        }
-    }));
+    return appState.filteredData.filter(item => item.fechaLimite).map(item => {
+        const { color, className } = getEventColorAndClass(item);
+        
+        return {
+            title: `${item.abreviatura} – ${item.entidad}`,
+            date: item.fechaLimite.toISOString().split('T')[0],
+            color: color,
+            className: className,
+            extendedProps: {
+                rowIndex: item.rowIndex,
+                description: item.obligacion,
+                status: item.estado,
+                empresa: item.empresa
+            }
+        };
+    });
 }
 
-// Get event color based on status
-function getEventColor(status) {
-    switch (status?.toLowerCase()) {
-        case 'completado': return '#21805C'; // success color
-        case 'vencido': return '#C0152F'; // error color
-        case 'en proceso': return '#A84B2F'; // warning color
-        default: return '#626C71'; // info color
+// Get event color and class based on enhanced status rules
+function getEventColorAndClass(item) {
+    if (!item.fechaLimite) {
+        return { color: '#6b7280', className: 'fc-event-no-aplica' };
     }
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dueDate = new Date(item.fechaLimite);
+    dueDate.setHours(0, 0, 0, 0);
+    
+    const estado = item.estado.toLowerCase();
+    
+    if (estado === 'presentada') {
+        return { color: '#22c55e', className: 'fc-event-presentada' };
+    } else if (estado === 'no aplica') {
+        return { color: '#6b7280', className: 'fc-event-no-aplica' };
+    } else if (estado === 'pendiente') {
+        if (dueDate < today) {
+            // Vencida: Pendiente y fecha límite < hoy
+            return { color: '#ef4444', className: 'fc-event-vencida' };
+        } else {
+            // Pendiente futuro
+            return { color: '#f59e0b', className: 'fc-event-pendiente' };
+        }
+    }
+    
+    // Default
+    return { color: '#f59e0b', className: 'fc-event-pendiente' };
 }
 
 // Update stats
@@ -768,15 +1166,17 @@ function updateStats() {
     const upcoming = appState.filteredData.filter(item => {
         if (!item.fechaLimite) return false;
         const dueDate = new Date(item.fechaLimite);
+        dueDate.setHours(0, 0, 0, 0);
         const diffTime = dueDate - today;
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        return diffDays >= 0 && diffDays <= 7 && item.estado !== 'Completado';
+        return diffDays >= 0 && diffDays <= 7 && item.estado.toLowerCase() !== 'presentada';
     }).length;
     
     const overdue = appState.filteredData.filter(item => {
         if (!item.fechaLimite) return false;
         const dueDate = new Date(item.fechaLimite);
-        return dueDate < today && item.estado !== 'Completado';
+        dueDate.setHours(0, 0, 0, 0);
+        return dueDate < today && item.estado.toLowerCase() === 'pendiente';
     }).length;
 
     totalEl.textContent = total;
@@ -794,15 +1194,21 @@ window.editRecord = function(rowIndex) {
 
     appState.currentEditingRow = rowIndex;
     
-    // Populate modal with correct field mappings
-    document.getElementById('editEmpresa').value = record.empresa || '';
-    document.getElementById('editAbreviatura').value = record.abreviatura || '';
-    document.getElementById('editResponsable').value = record.responsable || '';
-    document.getElementById('editEntidad').value = record.entidad || '';
-    document.getElementById('editObligacion').value = record.obligacion || '';
-    document.getElementById('editPeriodo').value = record.periodoConcat || '';
-    document.getElementById('editFechaLimite').value = record.fechaLimite || '';
-    document.getElementById('editEstado').value = record.estado || 'Pendiente';
+    // Populate modal
+    const fields = [
+        'editEmpresa', 'editAbreviatura', 'editResponsable', 'editEntidad', 
+        'editObligacion', 'editPeriodo', 'editAno', 'editFechaLimite', 'editEstado'
+    ];
+    const values = [
+        record.empresa, record.abreviatura, record.responsable, record.entidad,
+        record.obligacion, record.periodo, record.ano, 
+        record.fechaLimiteString, record.estado
+    ];
+    
+    fields.forEach((fieldId, index) => {
+        const field = document.getElementById(fieldId);
+        if (field) field.value = values[index];
+    });
 
     // Show modal
     const modal = document.getElementById('editModal');
@@ -847,8 +1253,13 @@ async function saveRecord(e) {
     try {
         appState.setLoading(true);
 
-        const periodoConcat = document.getElementById('editPeriodo')?.value || '';
-        const { periodo, ano } = splitPeriodoConcat(periodoConcat);
+        const fechaLimiteString = document.getElementById('editFechaLimite')?.value || '';
+        const fechaLimite = parseDate(fechaLimiteString);
+        
+        if (!fechaLimite) {
+            AlertManager.error('La fecha límite no es válida');
+            return;
+        }
 
         const updatedData = {
             empresa: document.getElementById('editEmpresa')?.value || '',
@@ -856,12 +1267,14 @@ async function saveRecord(e) {
             responsable: document.getElementById('editResponsable')?.value || '',
             entidad: document.getElementById('editEntidad')?.value || '',
             obligacion: document.getElementById('editObligacion')?.value || '',
-            periodo: periodo,
-            ano: ano,
-            fechaLimite: document.getElementById('editFechaLimite')?.value || '',
-            estado: document.getElementById('editEstado')?.value || 'Pendiente',
-            periodoConcat: periodoConcat
+            periodo: document.getElementById('editPeriodo')?.value || '',
+            ano: document.getElementById('editAno')?.value || new Date().getFullYear().toString(),
+            fechaLimite: fechaLimite,
+            fechaLimiteString: fechaLimiteString,
+            estado: document.getElementById('editEstado')?.value || 'Pendiente'
         };
+        
+        updatedData.periodoCompleto = `${updatedData.periodo}-${updatedData.ano}`;
 
         // Update local data
         const recordIndex = appState.data.findIndex(item => item.rowIndex === appState.currentEditingRow);
@@ -895,21 +1308,12 @@ async function saveRecord(e) {
     }
 }
 
-// Safe Google Sheets update with error handling - Updated for correct columns
+// Safe Google Sheets update
 async function safeGoogleSheetsUpdate(rowIndex, data) {
     try {
         const values = [
-            [
-                data.empresa,        // Column A
-                data.abreviatura,    // Column B  
-                data.responsable,    // Column C
-                data.entidad,        // Column D
-                data.obligacion,     // Column E
-                data.periodo,        // Column F
-                data.ano,            // Column G
-                data.fechaLimite,    // Column H
-                data.estado          // Column I
-            ]
+            [data.empresa, data.abreviatura, data.responsable, data.entidad, 
+             data.obligacion, data.periodo, data.ano, data.fechaLimiteString, data.estado]
         ];
 
         await gapi.client.sheets.spreadsheets.values.update({
@@ -931,6 +1335,7 @@ async function safeGoogleSheetsUpdate(rowIndex, data) {
 function clearAllData() {
     appState.data = [];
     appState.filteredData = [];
+    appState.selectedRows.clear();
     
     const tbody = document.getElementById('tableBody');
     if (tbody) tbody.innerHTML = '';
@@ -940,39 +1345,18 @@ function clearAllData() {
     }
     
     updateStats();
+    updateBulkActionsBar();
 }
 
 // Initialize app when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded, initializing app...');
     
-    // Always stop loading initially
     appState.setLoading(false);
-    
-    // Setup modal
     setupModal();
-    
-    // Load demo data immediately to show something
     loadDemoData();
     
-    // Try to initialize Google APIs in background
     setTimeout(() => {
         initializeGoogleAPIs();
     }, 500);
 });
-
-// Add CSS for slideOut animation
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideOut {
-        from {
-            transform: translateX(0);
-            opacity: 1;
-        }
-        to {
-            transform: translateX(100%);
-            opacity: 0;
-        }
-    }
-`;
-document.head.appendChild(style);

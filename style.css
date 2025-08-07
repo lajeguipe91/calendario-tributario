@@ -797,6 +797,24 @@ select.form-control {
   gap: var(--space-12);
 }
 
+/* User Info */
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-6) var(--space-12);
+  background-color: var(--color-secondary);
+  border-radius: var(--radius-base);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+
+.user-info::before {
+  content: "👤";
+  font-size: var(--font-size-base);
+}
+
 /* Loading Overlay */
 .loading-overlay {
   position: fixed;
@@ -1174,17 +1192,6 @@ select.form-control {
   border-top: 1px solid var(--color-border);
 }
 
-/* Login Modal Specific Styles */
-.login-info {
-  margin-top: var(--space-16);
-  padding-top: var(--space-16);
-  border-top: 1px solid var(--color-border);
-}
-
-.text-secondary {
-  color: var(--color-text-secondary);
-}
-
 /* Alert System */
 .alert-container {
   position: fixed;
@@ -1306,17 +1313,9 @@ select.form-control {
     height: 400px;
   }
 
-  .calendar-stats {
+  .header-actions {
+    flex-wrap: wrap;
     justify-content: center;
-  }
-
-  .modal-body {
-    padding: var(--space-16);
-  }
-
-  .modal-header,
-  .modal-footer {
-    padding: var(--space-16);
   }
 }
 
@@ -1349,55 +1348,13 @@ select.form-control {
   outline-offset: -2px;
 }
 
-/* Status indicators specific styling */
-.status {
-  display: inline-flex;
-  align-items: center;
-  padding: var(--space-4) var(--space-8);
-  border-radius: var(--radius-full);
-  font-weight: var(--font-weight-medium);
-  font-size: var(--font-size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.status--success {
-  background-color: rgba(var(--color-success-rgb), 0.15);
-  color: var(--color-success);
-  border: 1px solid rgba(var(--color-success-rgb), 0.25);
-}
-
-.status--error {
-  background-color: rgba(var(--color-error-rgb), 0.15);
-  color: var(--color-error);
-  border: 1px solid rgba(var(--color-error-rgb), 0.25);
-}
-
-.status--warning {
-  background-color: rgba(var(--color-warning-rgb), 0.15);
-  color: var(--color-warning);
-  border: 1px solid rgba(var(--color-warning-rgb), 0.25);
-}
-
-.status--info {
-  background-color: rgba(var(--color-info-rgb), 0.15);
-  color: var(--color-info);
-  border: 1px solid rgba(var(--color-info-rgb), 0.25);
-}
-
-/* Connection status improvements */
-.connection-status.loading {
-  background-color: var(--color-bg-8);
-}
-
 /* Print Styles */
 @media print {
   .header-actions,
   .filters-section,
   .loading-overlay,
   .modal,
-  .alert-container,
-  .connection-status {
+  .alert-container {
     display: none !important;
   }
 
@@ -1408,14 +1365,5 @@ select.form-control {
   .card {
     box-shadow: none;
     border: 1px solid #ccc;
-  }
-
-  .data-table {
-    font-size: 10px;
-  }
-
-  .data-table th,
-  .data-table td {
-    padding: var(--space-4) var(--space-6);
   }
 }

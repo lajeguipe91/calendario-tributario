@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Calendario Fiscal - Obligaciones Tributarias</title>
     
-    <!-- FullCalendar CSS -->
+    <!-- FullCalendar CSS - Using unpkg to avoid MIME type issues -->
     <link href="https://unpkg.com/fullcalendar@6.1.10/index.global.min.css" rel="stylesheet">
     
     <!-- Custom CSS -->
@@ -32,6 +32,8 @@
                     <button id="authBtn" class="btn btn--primary">
                         <span id="authText">Conectar a Google</span>
                     </button>
+                    <button id="loginBtn" class="btn btn--outline hidden">Iniciar Sesión</button>
+                    <span id="userInfo" class="user-info hidden"></span>
                     <button id="signoutBtn" class="btn btn--outline hidden">Cerrar Sesión</button>
                 </div>
             </div>
@@ -39,44 +41,10 @@
     </header>
 
     <!-- Loading Overlay -->
-    <div id="loadingOverlay" class="loading-overlay hidden">
+    <div id="loadingOverlay" class="loading-overlay">
         <div class="loading-content">
             <div class="loading-spinner"></div>
             <p>Cargando datos fiscales...</p>
-        </div>
-    </div>
-
-    <!-- Login Modal -->
-    <div id="loginModal" class="modal hidden">
-        <div class="modal-overlay">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h4>Iniciar Sesión</h4>
-                </div>
-                <div class="modal-body">
-                    <p class="text-center">Ingresa tus credenciales para acceder al sistema</p>
-                    <form id="loginForm">
-                        <div class="form-group">
-                            <label class="form-label">Usuario</label>
-                            <input type="text" id="loginUsername" class="form-control" required autocomplete="username">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Contraseña</label>
-                            <input type="password" id="loginPassword" class="form-control" required autocomplete="current-password">
-                        </div>
-                        <div class="form-group">
-                            <button type="submit" class="btn btn--primary btn--full-width">Iniciar Sesión</button>
-                        </div>
-                    </form>
-                    <div class="login-info">
-                        <p class="text-center">
-                            <small class="text-secondary">
-                                Los datos de usuario se cargan desde la hoja USUARIOS de Google Sheets
-                            </small>
-                        </p>
-                    </div>
-                </div>
-            </div>
         </div>
     </div>
 
@@ -139,7 +107,7 @@
                                 </span>
                             </div>
                         </div>
-                        <div id="calendar" style="position: relative; height: 600px;"></div>
+                        <div id="calendar"></div>
                     </div>
                 </div>
             </section>
@@ -153,12 +121,14 @@
                             <table id="obligationsTable" class="data-table">
                                 <thead>
                                     <tr>
+                                        <th>Empresa</th>
+                                        <th>Abreviatura</th>
+                                        <th>Responsable</th>
                                         <th>Entidad</th>
-                                        <th>Obligación</th>
-                                        <th>Empresa/Responsable</th>
-                                        <th>Fecha Vencimiento</th>
+                                        <th>Tipo de Obligación</th>
+                                        <th>Período</th>
+                                        <th>Fecha Límite</th>
                                         <th>Estado</th>
-                                        <th>Periodo/Año</th>
                                         <th>Acciones</th>
                                     </tr>
                                 </thead>
@@ -173,6 +143,36 @@
         </div>
     </main>
 
+    <!-- Login Modal -->
+    <div id="loginModal" class="modal hidden">
+        <div class="modal-overlay">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4>Iniciar Sesión</h4>
+                    <button id="closeLoginModal" class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="loginForm">
+                        <div class="form-group">
+                            <label class="form-label">Usuario</label>
+                            <select id="loginUsuario" class="form-control" required>
+                                <option value="">Seleccionar usuario...</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Contraseña</label>
+                            <input type="password" id="loginContrasena" class="form-control" required>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" id="cancelLogin" class="btn btn--outline">Cancelar</button>
+                    <button type="submit" form="loginForm" id="submitLogin" class="btn btn--primary">Iniciar Sesión</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Edit Modal -->
     <div id="editModal" class="modal hidden">
         <div class="modal-overlay">
@@ -184,33 +184,41 @@
                 <div class="modal-body">
                     <form id="editForm">
                         <div class="form-group">
+                            <label class="form-label">Empresa</label>
+                            <input type="text" id="editEmpresa" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Abreviatura</label>
+                            <input type="text" id="editAbreviatura" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Responsable</label>
+                            <input type="text" id="editResponsable" class="form-control" required>
+                        </div>
+                        <div class="form-group">
                             <label class="form-label">Entidad</label>
-                            <input type="text" id="editEntity" class="form-control" required>
+                            <input type="text" id="editEntidad" class="form-control" required>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Obligación</label>
-                            <input type="text" id="editType" class="form-control" required>
+                            <label class="form-label">Tipo de Obligación</label>
+                            <input type="text" id="editObligacion" class="form-control" required>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Empresa/Responsable</label>
-                            <textarea id="editDescription" class="form-control" rows="2" required></textarea>
+                            <label class="form-label">Período</label>
+                            <input type="text" id="editPeriodo" class="form-control" placeholder="ej: ene-feb-2025" required>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Fecha de Vencimiento</label>
-                            <input type="date" id="editDueDate" class="form-control" required>
+                            <label class="form-label">Fecha Límite Presentación</label>
+                            <input type="date" id="editFechaLimite" class="form-control" required>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Estado</label>
-                            <select id="editStatus" class="form-control" required>
+                            <select id="editEstado" class="form-control" required>
                                 <option value="Pendiente">Pendiente</option>
                                 <option value="Completado">Completado</option>
                                 <option value="Vencido">Vencido</option>
                                 <option value="En Proceso">En Proceso</option>
                             </select>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Periodo/Año</label>
-                            <textarea id="editNotes" class="form-control" rows="2"></textarea>
                         </div>
                     </form>
                 </div>
@@ -225,7 +233,7 @@
     <!-- Alert Container -->
     <div id="alertContainer" class="alert-container"></div>
 
-    <!-- Scripts -->
+    <!-- Scripts - Load Google APIs first, then FullCalendar, then our app -->
     <script src="https://apis.google.com/js/api.js" async defer></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://unpkg.com/fullcalendar@6.1.10/index.global.min.js"></script>

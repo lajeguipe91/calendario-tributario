@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Calendario Fiscal - Obligaciones Tributarias</title>
     
-    <!-- FullCalendar CSS - Using unpkg to avoid MIME type issues -->
+    <!-- FullCalendar CSS -->
     <link href="https://unpkg.com/fullcalendar@6.1.10/index.global.min.css" rel="stylesheet">
     
     <!-- Custom CSS -->
@@ -29,21 +29,17 @@
             <div class="header-content">
                 <h1>Calendario Fiscal</h1>
                 <div class="header-actions">
-                    <div class="user-info hidden" id="userInfo">
-                        <span class="user-welcome">Hola, <span id="currentUser">Usuario</span></span>
-                    </div>
                     <button id="authBtn" class="btn btn--primary">
                         <span id="authText">Conectar a Google</span>
                     </button>
-                    <button id="loginBtn" class="btn btn--outline hidden">Iniciar Sesión</button>
                     <button id="signoutBtn" class="btn btn--outline hidden">Cerrar Sesión</button>
                 </div>
             </div>
         </div>
-    </div>
+    </header>
 
     <!-- Loading Overlay -->
-    <div id="loadingOverlay" class="loading-overlay">
+    <div id="loadingOverlay" class="loading-overlay hidden">
         <div class="loading-content">
             <div class="loading-spinner"></div>
             <p>Cargando datos fiscales...</p>
@@ -56,31 +52,29 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <h4>Iniciar Sesión</h4>
-                    <button id="closeLoginModal" class="modal-close">&times;</button>
                 </div>
                 <div class="modal-body">
-                    <div id="loginError" class="alert error hidden" style="margin-bottom: var(--space-16);">
-                        Usuario o contraseña incorrectos
-                    </div>
+                    <p class="text-center">Ingresa tus credenciales para acceder al sistema</p>
                     <form id="loginForm">
                         <div class="form-group">
                             <label class="form-label">Usuario</label>
-                            <select id="userSelect" class="form-control" required>
-                                <option value="">Seleccione un usuario...</option>
-                            </select>
+                            <input type="text" id="loginUsername" class="form-control" required autocomplete="username">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Contraseña</label>
-                            <input type="password" id="passwordInput" class="form-control" required placeholder="Ingrese su contraseña">
+                            <input type="password" id="loginPassword" class="form-control" required autocomplete="current-password">
+                        </div>
+                        <div class="form-group">
+                            <button type="submit" class="btn btn--primary btn--full-width">Iniciar Sesión</button>
                         </div>
                     </form>
                     <div class="login-info">
-                        <p><small>Los usuarios se cargan automáticamente desde Google Sheets una vez conectado.</small></p>
+                        <p class="text-center">
+                            <small class="text-secondary">
+                                Los datos de usuario se cargan desde la hoja USUARIOS de Google Sheets
+                            </small>
+                        </p>
                     </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" id="cancelLogin" class="btn btn--outline">Cancelar</button>
-                    <button type="submit" form="loginForm" id="submitLogin" class="btn btn--primary">Iniciar Sesión</button>
                 </div>
             </div>
         </div>
@@ -89,14 +83,6 @@
     <!-- Main Content -->
     <main class="main-content">
         <div class="container">
-            <!-- Demo Mode Notice -->
-            <div id="demoNotice" class="demo-notice">
-                <div class="demo-content">
-                    <span class="demo-icon">🚀</span>
-                    <span class="demo-text">Modo demostración activo - Conecta a Google Sheets para datos reales</span>
-                </div>
-            </div>
-
             <!-- Filters Section -->
             <section class="filters-section">
                 <div class="card">
@@ -153,7 +139,7 @@
                                 </span>
                             </div>
                         </div>
-                        <div id="calendar"></div>
+                        <div id="calendar" style="position: relative; height: 600px;"></div>
                     </div>
                 </div>
             </section>
@@ -168,11 +154,11 @@
                                 <thead>
                                     <tr>
                                         <th>Entidad</th>
-                                        <th>Tipo</th>
-                                        <th>Descripción</th>
+                                        <th>Obligación</th>
+                                        <th>Empresa/Responsable</th>
                                         <th>Fecha Vencimiento</th>
                                         <th>Estado</th>
-                                        <th>Notas</th>
+                                        <th>Periodo/Año</th>
                                         <th>Acciones</th>
                                     </tr>
                                 </thead>
@@ -202,12 +188,12 @@
                             <input type="text" id="editEntity" class="form-control" required>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Tipo</label>
+                            <label class="form-label">Obligación</label>
                             <input type="text" id="editType" class="form-control" required>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Descripción</label>
-                            <textarea id="editDescription" class="form-control" rows="3" required></textarea>
+                            <label class="form-label">Empresa/Responsable</label>
+                            <textarea id="editDescription" class="form-control" rows="2" required></textarea>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Fecha de Vencimiento</label>
@@ -223,7 +209,7 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Notas</label>
+                            <label class="form-label">Periodo/Año</label>
                             <textarea id="editNotes" class="form-control" rows="2"></textarea>
                         </div>
                     </form>
@@ -239,7 +225,7 @@
     <!-- Alert Container -->
     <div id="alertContainer" class="alert-container"></div>
 
-    <!-- Scripts - Load Google APIs first, then FullCalendar, then our app -->
+    <!-- Scripts -->
     <script src="https://apis.google.com/js/api.js" async defer></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://unpkg.com/fullcalendar@6.1.10/index.global.min.js"></script>

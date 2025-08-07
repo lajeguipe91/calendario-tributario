@@ -1,13 +1,14 @@
-// Google Sheets Tax Calendar Application - New Authentication Flow
-// Production Configuration
+// Google Sheets Tax Calendar Application - Fixed Version with USER LOGIN and correct DATA sheet
+// Production Configuration with corrected sheet names and user authentication
 const CONFIG = {
     API_KEY: 'AIzaSyBdlizVp_hOembaoFJYE_rKHCvFtn9asok',
     CLIENT_ID: '341125602004-36tl0jfhtd7ce21csjun41fel085res8.apps.googleusercontent.com',
     SPREADSHEET_ID: '10L6aSKz8oPtq4ZpXcO921vCIciHWlCRqo_w5pAHc3yo',
     DISCOVERY_DOC: 'https://sheets.googleapis.com/$discovery/rest?version=v4',
     SCOPES: 'https://www.googleapis.com/auth/spreadsheets',
-    DATA_RANGE: 'Sheet1!A:J',
-    USERS_RANGE: 'USUARIOS!A:D' // Assuming columns: Usuario, Contraseña, Permisos, Nombre
+    // CRITICAL FIX: Correct ranges
+    DATA_RANGE: 'DATA!A:I',  // Fixed: DATA sheet, columns A to I
+    USERS_RANGE: 'USUARIOS!A:E'  // USUARIOS sheet, columns A to E
 };
 
 // Global State Management
@@ -29,18 +30,33 @@ class AppState {
         this.calendar = null;
         this.currentEditingRow = null;
         this.initializationAttempts = 0;
-        this.maxInitAttempts = 3;
-        this.connectionAttempted = false;
+        this.maxInitAttempts = 2;
+        this.tokenClient = null;
+        this.loadingTimeout = null;
     }
 
-    setLoading(loading) {
+    setLoading(loading, message = 'Cargando...') {
         this.isLoading = loading;
         const overlay = document.getElementById('loadingOverlay');
+        const loadingText = overlay?.querySelector('p');
+        
         if (overlay) {
             if (loading) {
                 overlay.classList.remove('hidden');
+                if (loadingText) loadingText.textContent = message;
+                
+                // CRITICAL FIX: Set timeout to prevent stuck loading
+                this.loadingTimeout = setTimeout(() => {
+                    console.warn('Loading timeout reached, hiding overlay');
+                    this.setLoading(false);
+                    AlertManager.warning('Tiempo de espera agotado. Usando datos de demostración.');
+                }, 15000); // 15 seconds timeout
             } else {
                 overlay.classList.add('hidden');
+                if (this.loadingTimeout) {
+                    clearTimeout(this.loadingTimeout);
+                    this.loadingTimeout = null;
+                }
             }
         }
     }
@@ -64,6 +80,10 @@ class AppState {
                     icon.textContent = '❌';
                     if (retryBtn) retryBtn.classList.remove('hidden');
                     break;
+                case 'loading':
+                    icon.textContent = '🔄';
+                    if (retryBtn) retryBtn.classList.add('hidden');
+                    break;
                 default:
                     icon.textContent = '⚠️';
                     if (retryBtn) retryBtn.classList.add('hidden');
@@ -72,79 +92,10 @@ class AppState {
             text.textContent = message;
         }
     }
-
-    setDemoMode(isDemoMode) {
-        const demoNotice = document.getElementById('demoNotice');
-        if (demoNotice) {
-            if (isDemoMode) {
-                demoNotice.classList.remove('hidden');
-            } else {
-                demoNotice.classList.add('hidden');
-            }
-        }
-    }
-
-    setCurrentUser(user) {
-        this.currentUser = user;
-        const userInfo = document.getElementById('userInfo');
-        const currentUserSpan = document.getElementById('currentUser');
-        
-        if (userInfo && currentUserSpan) {
-            if (user) {
-                currentUserSpan.textContent = user.nombre || user.usuario;
-                userInfo.classList.remove('hidden');
-            } else {
-                userInfo.classList.add('hidden');
-            }
-        }
-    }
 }
 
 // Global state instance
 const appState = new AppState();
-
-// Local Storage Management
-class StorageManager {
-    static keys = {
-        AUTH_TOKEN: 'fiscal_auth_token',
-        USER_DATA: 'fiscal_user_data',
-        AUTO_CONNECT: 'fiscal_auto_connect'
-    };
-
-    static set(key, value) {
-        try {
-            localStorage.setItem(key, JSON.stringify(value));
-        } catch (error) {
-            console.warn('LocalStorage not available:', error);
-        }
-    }
-
-    static get(key) {
-        try {
-            const value = localStorage.getItem(key);
-            return value ? JSON.parse(value) : null;
-        } catch (error) {
-            console.warn('LocalStorage read error:', error);
-            return null;
-        }
-    }
-
-    static remove(key) {
-        try {
-            localStorage.removeItem(key);
-        } catch (error) {
-            console.warn('LocalStorage remove error:', error);
-        }
-    }
-
-    static clear() {
-        try {
-            Object.values(this.keys).forEach(key => this.remove(key));
-        } catch (error) {
-            console.warn('LocalStorage clear error:', error);
-        }
-    }
-}
 
 // Alert System
 class AlertManager {
@@ -197,131 +148,170 @@ class AlertManager {
     }
 }
 
-// Google APIs Initialization
+// Wait for Google APIs to load with timeout
+function waitForGoogleAPI() {
+    return new Promise((resolve, reject) => {
+        let attempts = 0;
+        const maxAttempts = 50; // 5 seconds
+        
+        const checkAPI = () => {
+            attempts++;
+            if (typeof gapi !== 'undefined' && gapi.load) {
+                resolve();
+            } else if (attempts >= maxAttempts) {
+                reject(new Error('Google API no se cargó en el tiempo esperado'));
+            } else {
+                setTimeout(checkAPI, 100);
+            }
+        };
+        
+        checkAPI();
+    });
+}
+
+// Wait for Google GSI to load with timeout
+function waitForGoogleGSI() {
+    return new Promise((resolve, reject) => {
+        let attempts = 0;
+        const maxAttempts = 50; // 5 seconds
+        
+        const checkGSI = () => {
+            attempts++;
+            if (typeof google !== 'undefined' && google.accounts && google.accounts.oauth2) {
+                resolve();
+            } else if (attempts >= maxAttempts) {
+                reject(new Error('Google GSI no se cargó en el tiempo esperado'));
+            } else {
+                setTimeout(checkGSI, 100);
+            }
+        };
+        
+        checkGSI();
+    });
+}
+
+// CRITICAL FIX: Better error handling and timeout management
 async function initializeGoogleAPIs() {
     try {
         console.log('Initializing Google APIs... Attempt:', appState.initializationAttempts + 1);
         appState.initializationAttempts++;
-        appState.updateConnectionStatus('loading', 'Conectando a Google Sheets...');
+        appState.updateConnectionStatus('loading', 'Inicializando APIs de Google...');
 
-        // Check if we've exceeded max attempts
         if (appState.initializationAttempts > appState.maxInitAttempts) {
-            throw new Error('Se agotaron los intentos de conexión automática');
+            throw new Error('Se agotaron los intentos de conexión');
         }
 
-        // Wait for gapi to be available with timeout
-        let gapiReady = false;
-        let attempts = 0;
-        const maxAttempts = 50; // 5 seconds total
+        // CRITICAL FIX: Don't show loading modal during API initialization
+        await waitForGoogleAPI();
+        console.log('Google API disponible');
 
-        while (!gapiReady && attempts < maxAttempts) {
-            if (typeof gapi !== 'undefined') {
-                gapiReady = true;
-                break;
-            }
-            await new Promise(resolve => setTimeout(resolve, 100));
-            attempts++;
-        }
+        await new Promise((resolve, reject) => {
+            gapi.load('client', {
+                callback: resolve,
+                onerror: () => reject(new Error('Error al cargar el cliente de Google API'))
+            });
+        });
 
-        if (!gapiReady) {
-            throw new Error('Google API library no disponible');
-        }
-
-        // Initialize gapi with timeout
-        await Promise.race([
-            new Promise((resolve, reject) => {
-                gapi.load('client', {
-                    callback: resolve,
-                    onerror: () => reject(new Error('Error cargando cliente GAPI'))
-                });
-            }),
-            new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout cargando GAPI')), 10000)
-            )
-        ]);
-
-        await Promise.race([
-            gapi.client.init({
-                apiKey: CONFIG.API_KEY,
-                discoveryDocs: [CONFIG.DISCOVERY_DOC],
-            }),
-            new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout inicializando cliente GAPI')), 10000)
-            )
-        ]);
+        await gapi.client.init({
+            apiKey: CONFIG.API_KEY,
+            discoveryDocs: [CONFIG.DISCOVERY_DOC],
+        });
 
         appState.gapiInited = true;
         console.log('GAPI initialized successfully');
 
-        // Initialize Google Sign-In
-        let googleAccountsReady = false;
-        attempts = 0;
+        try {
+            await waitForGoogleGSI();
+            console.log('Google GSI disponible');
 
-        while (!googleAccountsReady && attempts < maxAttempts) {
-            if (typeof google !== 'undefined' && google.accounts) {
-                googleAccountsReady = true;
-                break;
-            }
-            await new Promise(resolve => setTimeout(resolve, 100));
-            attempts++;
-        }
+            appState.tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CONFIG.CLIENT_ID,
+                scope: CONFIG.SCOPES,
+                prompt: '',
+                callback: handleOAuthCallback,
+                error_callback: handleOAuthError
+            });
 
-        if (googleAccountsReady) {
-            try {
-                google.accounts.id.initialize({
-                    client_id: CONFIG.CLIENT_ID,
-                    callback: handleCredentialResponse,
-                });
-                appState.gsiInited = true;
-                console.log('GSI initialized successfully');
-            } catch (gsiError) {
-                console.warn('GSI initialization failed, but continuing:', gsiError);
-                appState.gsiInited = false;
-            }
-        } else {
-            console.warn('Google Sign-In library not available, but continuing');
+            appState.gsiInited = true;
+            console.log('GSI initialized successfully');
+        } catch (gsiError) {
+            console.warn('GSI initialization failed:', gsiError);
             appState.gsiInited = false;
         }
 
-        // Try to auto-connect if we have stored auth preference
-        const autoConnect = StorageManager.get(StorageManager.keys.AUTO_CONNECT);
-        if (autoConnect) {
-            console.log('Auto-connecting based on stored preference...');
-            await handleAuthClick();
-        } else {
-            appState.updateConnectionStatus('info', 'Google APIs listas - Haz clic en "Conectar a Google"');
-            setupAuthButton();
-        }
+        appState.updateConnectionStatus('success', 'APIs de Google inicializadas correctamente');
+        setupAuthButton();
 
     } catch (error) {
         console.error('Error initializing Google APIs:', error);
-        appState.updateConnectionStatus('error', `Error: ${error.message}`);
-        AlertManager.warning(`Conexión automática falló: ${error.message}. Usa el botón "Conectar a Google".`);
+        appState.updateConnectionStatus('error', `Error al inicializar: ${error.message}`);
+        AlertManager.error(`Error al conectar con Google: ${error.message}`);
         setupAuthButton();
-    } finally {
-        appState.connectionAttempted = true;
     }
 }
 
-// Handle credential response
-function handleCredentialResponse(response) {
-    console.log('Credential response received');
-    // For this implementation, we'll use the simpler OAuth flow
-    handleAuthClick();
+// CRITICAL FIX: OAuth callback handler with better error handling
+async function handleOAuthCallback(response) {
+    try {
+        console.log('Authorization successful');
+        
+        if (response.error) {
+            throw new Error('OAuth error: ' + response.error);
+        }
+
+        if (!response.access_token) {
+            throw new Error('No se recibió token de acceso');
+        }
+
+        gapi.client.setToken({
+            access_token: response.access_token
+        });
+
+        appState.isSignedIn = true;
+        updateAuthUI();
+        appState.updateConnectionStatus('success', 'Conectado a Google Sheets');
+        
+        // CRITICAL FIX: Load users from USUARIOS sheet with proper loading handling
+        await loadUsers();
+        
+    } catch (error) {
+        console.error('OAuth callback error:', error);
+        appState.isSignedIn = false;
+        updateAuthUI();
+        appState.setLoading(false); // CRITICAL FIX: Ensure loading stops
+        appState.updateConnectionStatus('error', 'Error de autorización');
+        AlertManager.error('Error en la autorización: ' + error.message);
+        loadDemoData(); // Fallback to demo data
+    }
+}
+
+// CRITICAL FIX: OAuth error handler with proper loading cleanup
+function handleOAuthError(error) {
+    console.error('OAuth error:', error);
+    appState.setLoading(false); // CRITICAL FIX: Ensure loading stops
+    appState.isSignedIn = false;
+    updateAuthUI();
+    
+    if (error.type === 'popup_closed') {
+        appState.updateConnectionStatus('error', 'Ventana de autenticación cerrada');
+        AlertManager.warning('Ventana de autenticación cerrada. Inténtalo de nuevo.');
+    } else {
+        appState.updateConnectionStatus('error', 'Error de autorización');
+        AlertManager.error('Error en la autorización. Usando datos de demostración.');
+    }
+    
+    // Fallback to demo data
+    loadDemoData();
 }
 
 // Setup auth button
 function setupAuthButton() {
     const authBtn = document.getElementById('authBtn');
-    const loginBtn = document.getElementById('loginBtn');
     const signoutBtn = document.getElementById('signoutBtn');
     const retryBtn = document.getElementById('retryBtn');
 
     if (authBtn) {
         authBtn.addEventListener('click', handleAuthClick);
-    }
-    if (loginBtn) {
-        loginBtn.addEventListener('click', showLoginModal);
     }
     if (signoutBtn) {
         signoutBtn.addEventListener('click', handleSignoutClick);
@@ -329,7 +319,7 @@ function setupAuthButton() {
     if (retryBtn) {
         retryBtn.addEventListener('click', () => {
             appState.updateConnectionStatus('loading', 'Reintentando conexión...');
-            appState.initializationAttempts = 0; // Reset attempts
+            appState.initializationAttempts = 0;
             initializeGoogleAPIs();
         });
     }
@@ -337,80 +327,94 @@ function setupAuthButton() {
     updateAuthUI();
 }
 
-// Handle authorization
+// CRITICAL FIX: Better error handling for auth click
 async function handleAuthClick() {
     if (!appState.gapiInited) {
         AlertManager.error('Las APIs de Google no están inicializadas');
         return;
     }
 
+    if (!appState.tokenClient) {
+        AlertManager.error('Cliente OAuth no está inicializado');
+        return;
+    }
+
     try {
-        appState.setLoading(true);
-        appState.updateConnectionStatus('loading', 'Autenticando con Google...');
-
-        // Check if google.accounts.oauth2 is available
-        if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
-            throw new Error('OAuth library no disponible');
-        }
-
-        // Create a token client
-        const tokenClient = google.accounts.oauth2.initTokenClient({
-            client_id: CONFIG.CLIENT_ID,
-            scope: CONFIG.SCOPES,
-            callback: async (response) => {
-                try {
-                    if (response.error) {
-                        throw new Error('Authorization failed: ' + response.error);
-                    }
-                    
-                    console.log('Authorization successful');
-                    appState.isSignedIn = true;
-                    
-                    // Store auth preference
-                    StorageManager.set(StorageManager.keys.AUTO_CONNECT, true);
-                    StorageManager.set(StorageManager.keys.AUTH_TOKEN, response.access_token);
-                    
-                    updateAuthUI();
-                    appState.updateConnectionStatus('success', 'Conectado a Google Sheets');
-                    appState.setDemoMode(false);
-                    
-                    // Load users first, then data
-                    await loadUsers();
-                    await loadSpreadsheetData();
-                    
-                    AlertManager.success('Conectado exitosamente. Usuarios cargados.');
-                    
-                } catch (callbackError) {
-                    console.error('Authorization callback error:', callbackError);
-                    AlertManager.error('Error en la autorización: ' + callbackError.message);
-                    appState.updateConnectionStatus('error', 'Error de autorización');
-                } finally {
-                    appState.setLoading(false);
-                }
-            },
-            error_callback: (error) => {
-                console.error('Authorization error:', error);
+        appState.setLoading(true, 'Conectando a Google...');
+        appState.updateConnectionStatus('loading', 'Autenticando...');
+        console.log('Requesting access token...');
+        
+        // CRITICAL FIX: Set timeout for auth process
+        setTimeout(() => {
+            if (appState.isLoading && !appState.isSignedIn) {
                 appState.setLoading(false);
-                appState.updateConnectionStatus('error', 'Error de autorización');
-                AlertManager.error('Error en la autorización. Continuando con modo demostración.');
+                AlertManager.warning('Tiempo de espera agotado en la autenticación');
             }
-        });
-
-        tokenClient.requestAccessToken();
-
+        }, 30000); // 30 seconds timeout
+        
+        appState.tokenClient.requestAccessToken();
+        
     } catch (error) {
-        console.error('Auth error:', error);
+        console.error('Auth click error:', error);
         appState.setLoading(false);
         appState.updateConnectionStatus('error', 'Error de autenticación');
-        AlertManager.error('Error de autenticación: ' + error.message + '. Continuando con modo demostración.');
+        AlertManager.error('Error de autenticación: ' + error.message);
     }
 }
 
-// Load users from USUARIOS sheet
+// Handle signout
+function handleSignoutClick() {
+    try {
+        const token = gapi.client.getToken();
+        if (token !== null) {
+            google.accounts.oauth2.revoke(token.access_token, () => {
+                console.log('Token revoked');
+            });
+            gapi.client.setToken('');
+        }
+    } catch (error) {
+        console.warn('Error during signout:', error);
+    }
+    
+    appState.isSignedIn = false;
+    appState.currentUser = null;
+    appState.users = [];
+    appState.data = [];
+    appState.filteredData = [];
+    
+    updateAuthUI();
+    clearAllData();
+    loadDemoData();
+    appState.updateConnectionStatus('info', 'Desconectado de Google Sheets');
+    AlertManager.info('Sesión cerrada. Mostrando datos de demostración.');
+}
+
+// Update auth UI
+function updateAuthUI() {
+    const authBtn = document.getElementById('authBtn');
+    const authText = document.getElementById('authText');
+    const signoutBtn = document.getElementById('signoutBtn');
+
+    if (authBtn && signoutBtn) {
+        if (appState.currentUser) {
+            authBtn.classList.add('hidden');
+            signoutBtn.classList.remove('hidden');
+        } else {
+            authBtn.classList.remove('hidden');
+            signoutBtn.classList.add('hidden');
+            if (authText) {
+                authText.textContent = appState.isSignedIn ? 'Iniciar Sesión' : 'Conectar a Google';
+            }
+        }
+    }
+}
+
+// CRITICAL FIX: Load users with better error handling and loading management
 async function loadUsers() {
     try {
         console.log('Loading users from USUARIOS sheet...');
-        
+        appState.setLoading(true, 'Cargando usuarios...');
+
         const response = await gapi.client.sheets.spreadsheets.values.get({
             spreadsheetId: CONFIG.SPREADSHEET_ID,
             range: CONFIG.USERS_RANGE,
@@ -421,55 +425,34 @@ async function loadUsers() {
             throw new Error('No se encontraron usuarios en la hoja USUARIOS');
         }
 
-        // Process users (skip header row)
-        appState.users = rows.slice(1).map(row => ({
-            usuario: row[0] || '',
-            contraseña: row[1] || '',
-            permisos: row[2] || 'basico',
-            nombre: row[3] || row[0] || ''
-        })).filter(user => user.usuario); // Filter out empty users
+        // Skip header row and parse users
+        // USUARIOS sheet: A=USER, B=password, C=role, D=companies, E=email
+        appState.users = rows.slice(1).map((row, index) => ({
+            username: row[0] || '',
+            password: row[1] || '', // FIXED: password is column B (index 1), not email
+            role: row[2] || '',
+            companies: row[3] || '', // FIXED: companies column D (index 3)
+            email: row[4] || '' // FIXED: email is column E (index 4)
+        })).filter(user => user.username && user.password);
 
         console.log(`Loaded ${appState.users.length} users`);
+        appState.setLoading(false); // CRITICAL FIX: Stop loading before showing modal
         
-        // Populate user select
-        populateUserSelect();
-        
-        // Show login modal if we have users
         if (appState.users.length > 0) {
-            showLoginModal();
+            // CRITICAL FIX: Small delay to ensure loading modal is hidden
+            setTimeout(() => {
+                showLoginModal();
+            }, 500);
+        } else {
+            throw new Error('No se encontraron usuarios válidos');
         }
 
     } catch (error) {
         console.error('Error loading users:', error);
-        AlertManager.warning('No se pudieron cargar los usuarios: ' + error.message + '. Continuando sin autenticación de usuario.');
-        
-        // Create demo user for testing
-        appState.users = [{
-            usuario: 'admin',
-            contraseña: 'admin123',
-            permisos: 'admin',
-            nombre: 'Administrador Demo'
-        }];
-        populateUserSelect();
-        showLoginModal();
+        appState.setLoading(false); // CRITICAL FIX: Ensure loading stops on error
+        AlertManager.error('Error al cargar usuarios: ' + error.message);
+        loadDemoData();
     }
-}
-
-// Populate user select dropdown
-function populateUserSelect() {
-    const userSelect = document.getElementById('userSelect');
-    if (!userSelect) return;
-    
-    // Clear existing options except first
-    userSelect.innerHTML = '<option value="">Seleccione un usuario...</option>';
-    
-    // Add user options
-    appState.users.forEach(user => {
-        const option = document.createElement('option');
-        option.value = user.usuario;
-        option.textContent = `${user.nombre} (${user.usuario})`;
-        userSelect.appendChild(option);
-    });
 }
 
 // Show login modal
@@ -477,180 +460,144 @@ function showLoginModal() {
     const modal = document.getElementById('loginModal');
     if (modal) {
         modal.classList.remove('hidden');
-        // Clear any previous errors
-        const errorDiv = document.getElementById('loginError');
-        if (errorDiv) errorDiv.classList.add('hidden');
+        const usernameField = document.getElementById('loginUsername');
+        if (usernameField) {
+            usernameField.focus();
+        }
         
-        // Clear form
-        const form = document.getElementById('loginForm');
-        if (form) form.reset();
+        // Add demo user info to login modal
+        const infoDiv = modal.querySelector('.login-info');
+        if (infoDiv && appState.users.length > 0) {
+            const demoUser = appState.users[0];
+            infoDiv.innerHTML = `
+                <p class="text-center">
+                    <small class="text-secondary">
+                        Los datos de usuario se cargan desde la hoja USUARIOS de Google Sheets<br>
+                        <strong>Usuarios disponibles: ${appState.users.length}</strong><br>
+                        <em>Ejemplo: ${demoUser.username}</em>
+                    </small>
+                </p>
+            `;
+        }
     }
 }
 
-// Handle user login
-function handleUserLogin(e) {
+// Handle login
+function handleLogin(e) {
     e.preventDefault();
     
-    const selectedUser = document.getElementById('userSelect')?.value;
-    const password = document.getElementById('passwordInput')?.value;
-    const errorDiv = document.getElementById('loginError');
+    const username = document.getElementById('loginUsername')?.value || '';
+    const password = document.getElementById('loginPassword')?.value || '';
     
-    if (!selectedUser || !password) {
-        if (errorDiv) {
-            errorDiv.textContent = 'Por favor seleccione un usuario e ingrese la contraseña';
-            errorDiv.classList.remove('hidden');
-        }
+    if (!username || !password) {
+        AlertManager.error('Por favor ingresa usuario y contraseña');
         return;
     }
-    
-    // Find user
-    const user = appState.users.find(u => u.usuario === selectedUser);
-    if (!user || user.contraseña !== password) {
-        if (errorDiv) {
-            errorDiv.textContent = 'Usuario o contraseña incorrectos';
-            errorDiv.classList.remove('hidden');
-        }
-        return;
-    }
-    
-    // Login successful
-    appState.setCurrentUser(user);
-    StorageManager.set(StorageManager.keys.USER_DATA, user);
-    
-    const modal = document.getElementById('loginModal');
-    if (modal) modal.classList.add('hidden');
-    
-    // Filter data based on user permissions
-    filterDataByUser();
-    
-    AlertManager.success(`¡Bienvenido, ${user.nombre}!`);
-}
 
-// Filter data based on user permissions
-function filterDataByUser() {
-    if (!appState.currentUser) {
-        appState.filteredData = [...appState.data];
+    // CRITICAL FIX: Find user with correct password field
+    const user = appState.users.find(u => 
+        u.username.toLowerCase() === username.toLowerCase() && 
+        u.password === password
+    );
+
+    if (!user) {
+        AlertManager.error('Usuario o contraseña incorrectos');
         return;
     }
-    
-    // For now, all users see all data
-    // In future, you can implement permission-based filtering here
-    // For example:
-    // if (appState.currentUser.permisos === 'basico') {
-    //     appState.filteredData = appState.data.filter(item => item.responsible === appState.currentUser.usuario);
-    // } else {
-    //     appState.filteredData = [...appState.data];
-    // }
-    
-    appState.filteredData = [...appState.data];
-    
-    // Update interface
-    initializeInterface();
-}
 
-// Handle signout
-function handleSignoutClick() {
-    try {
-        const token = gapi.client.getToken();
-        if (token !== null) {
-            google.accounts.oauth2.revoke(token.access_token);
-            gapi.client.setToken('');
-        }
-    } catch (error) {
-        console.warn('Error during signout:', error);
-    }
-    
-    appState.isSignedIn = false;
-    appState.data = [];
-    appState.filteredData = [];
-    appState.users = [];
-    appState.setCurrentUser(null);
-    
-    // Clear storage
-    StorageManager.clear();
-    
+    appState.currentUser = user;
+    closeLoginModal();
     updateAuthUI();
-    clearAllData();
-    loadDemoData(); // Load demo data after signout
-    appState.setDemoMode(true);
-    appState.updateConnectionStatus('info', 'Desconectado de Google Sheets');
-    AlertManager.info('Sesión cerrada. Mostrando datos de demostración.');
+    
+    AlertManager.success(`¡Bienvenido ${user.username}!`);
+    
+    // Load real data after successful login
+    loadSpreadsheetData();
 }
 
-// Update auth UI
-function updateAuthUI() {
-    const authBtn = document.getElementById('authBtn');
-    const authText = document.getElementById('authText');
-    const loginBtn = document.getElementById('loginBtn');
-    const signoutBtn = document.getElementById('signoutBtn');
-
-    if (authBtn && loginBtn && signoutBtn) {
-        if (appState.isSignedIn) {
-            authBtn.classList.add('hidden');
-            if (appState.currentUser) {
-                loginBtn.classList.add('hidden');
-                signoutBtn.classList.remove('hidden');
-            } else {
-                loginBtn.classList.remove('hidden');
-                signoutBtn.classList.add('hidden');
-            }
-        } else {
-            authBtn.classList.remove('hidden');
-            loginBtn.classList.add('hidden');
-            signoutBtn.classList.add('hidden');
-            if (authText) authText.textContent = 'Conectar a Google';
-        }
+// Close login modal
+function closeLoginModal() {
+    const modal = document.getElementById('loginModal');
+    if (modal) {
+        modal.classList.add('hidden');
     }
 }
 
-// Load spreadsheet data
+// CRITICAL FIX: Load spreadsheet data with proper loading management
 async function loadSpreadsheetData() {
     try {
         console.log('Loading spreadsheet data...');
-        appState.setLoading(true);
+        appState.setLoading(true, 'Cargando datos fiscales...');
 
         const response = await gapi.client.sheets.spreadsheets.values.get({
             spreadsheetId: CONFIG.SPREADSHEET_ID,
-            range: CONFIG.DATA_RANGE,
+            range: CONFIG.DATA_RANGE, // FIXED: Use DATA!A:I
         });
 
         const rows = response.result.values;
         if (!rows || rows.length === 0) {
-            throw new Error('No se encontraron datos en la hoja de cálculo');
+            throw new Error('No se encontraron datos en la hoja DATA');
         }
 
-        // Process data (skip header row)
+        // FIXED: Parse data according to correct column mapping
+        // DATA sheet: A=Empresa, B=Abreviatura, C=Responsable, D=Entidad, E=Obligación, F=Periodo, G=Año, H=Fecha límite, I=Estado
         const headers = rows[0];
         appState.data = rows.slice(1).map((row, index) => ({
-            rowIndex: index + 2, // +2 because we skip header and arrays are 0-indexed
-            entity: row[0] || '',
-            type: row[1] || '',
-            description: row[2] || '',
-            dueDate: row[3] || '',
-            status: row[4] || 'Pendiente',
-            notes: row[5] || '',
-            priority: row[6] || 'Media',
-            amount: row[7] || '',
-            responsible: row[8] || '',
-            completedDate: row[9] || ''
+            rowIndex: index + 2,
+            company: row[0] || '',      // A=Empresa
+            abbreviation: row[1] || '', // B=Abreviatura  
+            responsible: row[2] || '',  // C=Responsable
+            entity: row[3] || '',       // D=Entidad
+            obligation: row[4] || '',   // E=Obligación
+            period: row[5] || '',       // F=Periodo
+            year: row[6] || '',         // G=Año
+            dueDate: row[7] || '',      // H=Fecha límite
+            status: row[8] || 'Pendiente' // I=Estado
         }));
 
-        console.log(`Loaded ${appState.data.length} records`);
+        console.log(`Loaded ${appState.data.length} records from DATA sheet`);
         
-        // Filter data based on current user if logged in
-        filterDataByUser();
+        // CRITICAL FIX: Filter data by user companies
+        filterDataByUserPermissions();
         
-        AlertManager.success(`${appState.data.length} obligaciones cargadas desde Google Sheets`);
+        appState.setLoading(false); // CRITICAL FIX: Stop loading before initializing interface
+        initializeInterface();
+        appState.updateConnectionStatus('success', 'Datos cargados desde hoja DATA');
+        AlertManager.success(`${appState.filteredData.length} obligaciones cargadas y filtradas por permisos`);
 
     } catch (error) {
         console.error('Error loading data:', error);
-        AlertManager.error('Error al cargar datos de Google Sheets: ' + error.message + '. Usando datos de demostración.');
-        
-        // Load demo data as fallback
+        appState.setLoading(false); // CRITICAL FIX: Ensure loading stops on error
+        const errorMessage = error.result?.error?.message || error.message;
+        appState.updateConnectionStatus('error', `Error cargando datos: ${errorMessage}`);
+        AlertManager.error('Error al cargar datos de Google Sheets: ' + errorMessage);
         loadDemoData();
-    } finally {
-        appState.setLoading(false);
     }
+}
+
+// CRITICAL FIX: Filter data by user companies
+function filterDataByUserPermissions() {
+    if (!appState.currentUser || !appState.currentUser.companies) {
+        appState.filteredData = [...appState.data];
+        return;
+    }
+
+    // Parse user companies (could be comma-separated)
+    const userCompanies = appState.currentUser.companies
+        .split(',')
+        .map(c => c.trim().toLowerCase())
+        .filter(c => c);
+
+    // Filter data by user's allowed companies
+    appState.filteredData = appState.data.filter(item => {
+        if (!item.company) return false;
+        const itemCompany = item.company.toLowerCase();
+        return userCompanies.some(uc => 
+            itemCompany.includes(uc) || uc.includes(itemCompany)
+        );
+    });
+
+    console.log(`Filtered ${appState.data.length} records to ${appState.filteredData.length} based on user permissions`);
 }
 
 // Load demo data as fallback
@@ -660,79 +607,49 @@ function loadDemoData() {
     appState.data = [
         {
             rowIndex: 2,
-            entity: 'SUNAT',
-            type: 'IGV',
-            description: 'Declaración mensual de IGV',
-            dueDate: '2025-01-12',
-            status: 'Pendiente',
-            notes: 'Revisar facturas del mes anterior',
-            priority: 'Alta',
-            amount: '15000',
+            company: 'EMPRESA DEMO',
+            abbreviation: 'DEMO',
             responsible: 'Contador',
-            completedDate: ''
+            entity: 'SUNAT',
+            obligation: 'Declaración mensual de IGV',
+            period: 'Mensual',
+            year: '2025',
+            dueDate: '2025-01-12',
+            status: 'Pendiente'
         },
         {
             rowIndex: 3,
-            entity: 'SUNAT',
-            type: 'Renta',
-            description: 'Pago a cuenta de Impuesto a la Renta',
-            dueDate: '2025-01-12',
-            status: 'En Proceso',
-            notes: 'En preparación',
-            priority: 'Alta',
-            amount: '8500',
+            company: 'EMPRESA DEMO',
+            abbreviation: 'DEMO',
             responsible: 'Gerencia',
-            completedDate: ''
+            entity: 'SUNAT',
+            obligation: 'Pago a cuenta de Impuesto a la Renta',
+            period: 'Mensual',
+            year: '2025',
+            dueDate: '2025-01-12',
+            status: 'En Proceso'
         },
         {
             rowIndex: 4,
-            entity: 'ESSALUD',
-            type: 'Contribuciones',
-            description: 'Declaración y pago de contribuciones',
-            dueDate: '2025-01-15',
-            status: 'Pendiente',
-            notes: 'Incluir nuevos empleados',
-            priority: 'Alta',
-            amount: '3200',
+            company: 'EMPRESA DEMO',
+            abbreviation: 'DEMO',
             responsible: 'RRHH',
-            completedDate: ''
-        },
-        {
-            rowIndex: 5,
-            entity: 'SUNAT',
-            type: 'PDT',
-            description: 'Presentación de PDT 621',
-            dueDate: '2025-01-17',
-            status: 'Completado',
-            notes: 'Presentado correctamente',
-            priority: 'Media',
-            amount: '2500',
-            responsible: 'Contador',
-            completedDate: '2025-01-16'
-        },
-        {
-            rowIndex: 6,
-            entity: 'Municipalidad',
-            type: 'Licencias',
-            description: 'Renovación de licencia municipal',
-            dueDate: '2025-01-20',
-            status: 'Vencido',
-            notes: 'Pendiente de documentos',
-            priority: 'Crítica',
-            amount: '850',
-            responsible: 'Legal',
-            completedDate: ''
+            entity: 'ESSALUD',
+            obligation: 'Declaración y pago de contribuciones',
+            period: 'Mensual',
+            year: '2025',
+            dueDate: '2025-01-15',
+            status: 'Pendiente'
         }
     ];
 
     appState.filteredData = [...appState.data];
+    appState.setLoading(false); // CRITICAL FIX: Ensure loading stops
     initializeInterface();
-    appState.setDemoMode(true);
     
-    if (!appState.isSignedIn) {
-        AlertManager.info('Mostrando datos de demostración. Conéctate a Google Sheets para datos reales.');
+    if (!appState.currentUser) {
+        AlertManager.warning('Usando datos de demostración. Conéctate a Google Sheets para datos reales.');
     }
-    appState.setLoading(false);
 }
 
 // Initialize interface components
@@ -746,17 +663,17 @@ function initializeInterface() {
 // Setup filters
 function setupFilters() {
     const entities = new Set();
-    const types = new Set();
+    const obligations = new Set();
     const statuses = new Set();
 
-    appState.data.forEach(item => {
+    appState.filteredData.forEach(item => {
         if (item.entity) entities.add(item.entity);
-        if (item.type) types.add(item.type);
+        if (item.obligation) obligations.add(item.obligation);
         if (item.status) statuses.add(item.status);
     });
 
     createFilterCheckboxes('entityFilters', entities, 'entities');
-    createFilterCheckboxes('typeFilters', types, 'types');
+    createFilterCheckboxes('typeFilters', obligations, 'types');
     createFilterCheckboxes('statusFilters', statuses, 'statuses');
 
     setupFilterSearch();
@@ -834,7 +751,6 @@ function clearFilters() {
         search.value = '';
     });
     
-    // Reset filter visibility
     document.querySelectorAll('.filter-checkbox').forEach(checkbox => {
         checkbox.style.display = 'flex';
     });
@@ -848,17 +764,22 @@ function applyFilters() {
     const selectedTypes = getSelectedFilters('types');
     const selectedStatuses = getSelectedFilters('statuses');
 
-    appState.filteredData = appState.data.filter(item => {
+    // Start with user-filtered data (based on permissions)
+    let baseData = appState.currentUser ? appState.filteredData : appState.data;
+    
+    const filtered = baseData.filter(item => {
         return selectedEntities.has(item.entity) &&
-               selectedTypes.has(item.type) &&
+               selectedTypes.has(item.obligation) &&
                selectedStatuses.has(item.status);
     });
+
+    // Update the displayed data
+    const currentFiltered = appState.filteredData;
+    appState.filteredData = filtered;
 
     renderTable();
     updateCalendar();
     updateStats();
-    
-    AlertManager.info(`${appState.filteredData.length} registros después del filtro`);
 }
 
 // Get selected filters
@@ -870,7 +791,7 @@ function getSelectedFilters(filterType) {
     return selected;
 }
 
-// Render table
+// Render table with correct column mapping
 function renderTable() {
     const tbody = document.getElementById('tableBody');
     if (!tbody) return;
@@ -881,13 +802,13 @@ function renderTable() {
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${item.entity}</td>
-            <td>${item.type}</td>
-            <td>${item.description}</td>
+            <td>${item.obligation}</td>
+            <td>${item.company} - ${item.responsible}</td>
             <td>${formatDate(item.dueDate)}</td>
             <td class="status-cell">
                 <span class="status status--${getStatusClass(item.status)}">${item.status}</span>
             </td>
-            <td>${item.notes}</td>
+            <td>${item.period} ${item.year}</td>
             <td class="table-actions">
                 <button class="btn btn--sm btn--outline btn-icon" onclick="editRecord(${item.rowIndex})" title="Editar">
                     ✏️
@@ -958,13 +879,14 @@ function updateCalendar() {
 // Get calendar events
 function getCalendarEvents() {
     return appState.filteredData.map(item => ({
-        title: `${item.entity} - ${item.type}`,
+        title: `${item.entity} - ${item.obligation}`,
         date: item.dueDate,
         color: getEventColor(item.status),
         extendedProps: {
             rowIndex: item.rowIndex,
-            description: item.description,
-            status: item.status
+            description: item.obligation,
+            status: item.status,
+            company: item.company
         }
     }));
 }
@@ -972,10 +894,10 @@ function getCalendarEvents() {
 // Get event color based on status
 function getEventColor(status) {
     switch (status?.toLowerCase()) {
-        case 'completado': return '#21805C'; // success color
-        case 'vencido': return '#C0152F'; // error color
-        case 'en proceso': return '#A84B2F'; // warning color
-        default: return '#626C71'; // info color
+        case 'completado': return '#21805C';
+        case 'vencido': return '#C0152F';
+        case 'en proceso': return '#A84B2F';
+        default: return '#626C71';
     }
 }
 
@@ -1020,68 +942,55 @@ window.editRecord = function(rowIndex) {
 
     appState.currentEditingRow = rowIndex;
     
-    // Populate modal
-    const fields = ['editEntity', 'editType', 'editDescription', 'editDueDate', 'editStatus', 'editNotes'];
-    const values = [record.entity, record.type, record.description, record.dueDate, record.status, record.notes];
-    
-    fields.forEach((fieldId, index) => {
-        const field = document.getElementById(fieldId);
-        if (field) field.value = values[index];
-    });
+    // Populate modal with correct field mapping
+    document.getElementById('editEntity').value = record.entity;
+    document.getElementById('editType').value = record.obligation;
+    document.getElementById('editDescription').value = `${record.company} - ${record.responsible}`;
+    document.getElementById('editDueDate').value = record.dueDate;
+    document.getElementById('editStatus').value = record.status;
+    document.getElementById('editNotes').value = `${record.period} ${record.year}`;
 
-    // Show modal
     const modal = document.getElementById('editModal');
     if (modal) modal.classList.remove('hidden');
 };
 
-// Setup modals
-function setupModals() {
-    // Edit Modal
+// Setup modal
+function setupModal() {
     const editModal = document.getElementById('editModal');
+    const loginModal = document.getElementById('loginModal');
     const closeBtn = document.getElementById('closeModal');
     const cancelBtn = document.getElementById('cancelEdit');
     const editForm = document.getElementById('editForm');
+    const loginForm = document.getElementById('loginForm');
 
-    if (closeBtn) closeBtn.addEventListener('click', closeEditModal);
-    if (cancelBtn) cancelBtn.addEventListener('click', closeEditModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
     
     if (editModal) {
         editModal.addEventListener('click', (e) => {
-            if (e.target === editModal) closeEditModal();
+            if (e.target === editModal) closeModal();
         });
     }
 
     if (editForm) editForm.addEventListener('submit', saveRecord);
-
-    // Login Modal
-    const loginModal = document.getElementById('loginModal');
-    const closeLoginBtn = document.getElementById('closeLoginModal');
-    const cancelLoginBtn = document.getElementById('cancelLogin');
-    const loginForm = document.getElementById('loginForm');
-
-    if (closeLoginBtn) closeLoginBtn.addEventListener('click', closeLoginModal);
-    if (cancelLoginBtn) cancelLoginBtn.addEventListener('click', closeLoginModal);
+    if (loginForm) loginForm.addEventListener('submit', handleLogin);
     
-    if (loginModal) {
-        loginModal.addEventListener('click', (e) => {
-            if (e.target === loginModal) closeLoginModal();
-        });
-    }
-
-    if (loginForm) loginForm.addEventListener('submit', handleUserLogin);
+    // CRITICAL FIX: Add escape key handler to close loading modal if stuck
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            if (appState.isLoading) {
+                appState.setLoading(false);
+                AlertManager.warning('Proceso cancelado por el usuario');
+            }
+        }
+    });
 }
 
-// Close edit modal
-function closeEditModal() {
+// Close modal
+function closeModal() {
     const modal = document.getElementById('editModal');
     if (modal) modal.classList.add('hidden');
     appState.currentEditingRow = null;
-}
-
-// Close login modal
-function closeLoginModal() {
-    const modal = document.getElementById('loginModal');
-    if (modal) modal.classList.add('hidden');
 }
 
 // Save record
@@ -1094,64 +1003,61 @@ async function saveRecord(e) {
     }
 
     try {
-        appState.setLoading(true);
+        appState.setLoading(true, 'Guardando cambios...');
 
         const updatedData = {
             entity: document.getElementById('editEntity')?.value || '',
-            type: document.getElementById('editType')?.value || '',
-            description: document.getElementById('editDescription')?.value || '',
+            obligation: document.getElementById('editType')?.value || '',
             dueDate: document.getElementById('editDueDate')?.value || '',
-            status: document.getElementById('editStatus')?.value || 'Pendiente',
-            notes: document.getElementById('editNotes')?.value || ''
+            status: document.getElementById('editStatus')?.value || 'Pendiente'
         };
 
-        // Update local data
         const recordIndex = appState.data.findIndex(item => item.rowIndex === appState.currentEditingRow);
         if (recordIndex !== -1) {
             Object.assign(appState.data[recordIndex], updatedData);
         }
 
-        // Save to Google Sheets if connected
-        if (appState.isSignedIn) {
+        if (appState.isSignedIn && appState.currentUser) {
             await safeGoogleSheetsUpdate(appState.currentEditingRow, updatedData);
         }
 
-        // Update filtered data
-        const filteredIndex = appState.filteredData.findIndex(item => item.rowIndex === appState.currentEditingRow);
-        if (filteredIndex !== -1) {
-            Object.assign(appState.filteredData[filteredIndex], updatedData);
-        }
-
-        renderTable();
-        updateCalendar();
-        updateStats();
-        closeEditModal();
+        // Re-apply user permissions filtering
+        filterDataByUserPermissions();
         
+        // Re-apply current filters
+        applyFilters();
+        
+        appState.setLoading(false);
+        closeModal();
         AlertManager.success('Registro actualizado exitosamente');
 
     } catch (error) {
         console.error('Error saving record:', error);
-        AlertManager.error('Error al guardar: ' + error.message);
-    } finally {
         appState.setLoading(false);
+        AlertManager.error('Error al guardar: ' + error.message);
     }
 }
 
-// Safe Google Sheets update with error handling
+// Safe Google Sheets update
 async function safeGoogleSheetsUpdate(rowIndex, data) {
     try {
+        // Update with correct column mapping for DATA sheet
         const values = [
-            [data.entity, data.type, data.description, data.dueDate, data.status, data.notes]
+            [data.company || '', data.abbreviation || '', data.responsible || '', 
+             data.entity, data.obligation, data.period || '', data.year || '', 
+             data.dueDate, data.status]
         ];
+
+        const range = `DATA!A${rowIndex}:I${rowIndex}`;
 
         await gapi.client.sheets.spreadsheets.values.update({
             spreadsheetId: CONFIG.SPREADSHEET_ID,
-            range: `Sheet1!A${rowIndex}:F${rowIndex}`,
+            range: range,
             valueInputOption: 'USER_ENTERED',
             resource: { values }
         });
         
-        console.log('Successfully updated Google Sheets');
+        console.log(`Successfully updated Google Sheets at ${range}`);
     } catch (error) {
         console.error('Error updating Google Sheets:', error);
         AlertManager.warning('Cambio guardado localmente. Error al sincronizar con Google Sheets.');
@@ -1174,42 +1080,18 @@ function clearAllData() {
     updateStats();
 }
 
-// Check for stored auth and user data on startup
-function checkStoredAuth() {
-    const storedUser = StorageManager.get(StorageManager.keys.USER_DATA);
-    if (storedUser) {
-        appState.setCurrentUser(storedUser);
-        // Note: We don't auto-login, just restore user info if connection succeeds
-    }
-}
-
 // Initialize app when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded, initializing app...');
     
-    // Always stop loading initially and show demo data
     appState.setLoading(false);
+    setupModal();
     
-    // Setup modals
-    setupModals();
-    
-    // Check for stored auth data
-    checkStoredAuth();
-    
-    // Load demo data immediately to show something
+    // Load demo data immediately
     loadDemoData();
     
-    // Try to initialize Google APIs in background
+    // Initialize Google APIs with a delay to ensure all scripts are loaded
     setTimeout(() => {
-        if (!appState.connectionAttempted) {
-            initializeGoogleAPIs();
-        }
+        initializeGoogleAPIs();
     }, 1000);
-});
-
-// Window unload event to clean up
-window.addEventListener('beforeunload', () => {
-    if (appState.calendar) {
-        appState.calendar.destroy();
-    }
 });

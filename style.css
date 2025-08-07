@@ -797,52 +797,6 @@ select.form-control {
   gap: var(--space-12);
 }
 
-/* User Info */
-.user-info {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  padding: var(--space-6) var(--space-12);
-  background-color: var(--color-bg-1);
-  border-radius: var(--radius-base);
-  font-size: var(--font-size-sm);
-}
-
-.user-welcome {
-  color: var(--color-text-secondary);
-}
-
-.user-welcome span {
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-primary);
-}
-
-/* Demo Notice */
-.demo-notice {
-  background-color: var(--color-bg-2);
-  border: 1px solid var(--color-warning);
-  border-radius: var(--radius-base);
-  padding: var(--space-12) var(--space-16);
-  margin-bottom: var(--space-20);
-}
-
-.demo-notice.hidden {
-  display: none;
-}
-
-.demo-content {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  font-size: var(--font-size-sm);
-  color: var(--color-warning);
-  font-weight: var(--font-weight-medium);
-}
-
-.demo-icon {
-  font-size: var(--font-size-lg);
-}
-
 /* Loading Overlay */
 .loading-overlay {
   position: fixed;
@@ -1223,14 +1177,11 @@ select.form-control {
 /* Login Modal Specific Styles */
 .login-info {
   margin-top: var(--space-16);
-  padding: var(--space-12);
-  background-color: var(--color-bg-8);
-  border-radius: var(--radius-sm);
-  border-left: 3px solid var(--color-info);
+  padding-top: var(--space-16);
+  border-top: 1px solid var(--color-border);
 }
 
-.login-info p {
-  margin: 0;
+.text-secondary {
   color: var(--color-text-secondary);
 }
 
@@ -1318,16 +1269,6 @@ select.form-control {
     gap: var(--space-12);
   }
 
-  .header-actions {
-    flex-wrap: wrap;
-  }
-
-  .user-info {
-    order: -1;
-    width: 100%;
-    justify-content: center;
-  }
-
   .calendar-header {
     flex-direction: column;
     align-items: flex-start;
@@ -1365,14 +1306,17 @@ select.form-control {
     height: 400px;
   }
 
-  .demo-notice {
-    margin-bottom: var(--space-16);
+  .calendar-stats {
+    justify-content: center;
   }
 
-  .demo-content {
-    flex-direction: column;
-    text-align: center;
-    gap: var(--space-4);
+  .modal-body {
+    padding: var(--space-16);
+  }
+
+  .modal-header,
+  .modal-footer {
+    padding: var(--space-16);
   }
 }
 
@@ -1405,6 +1349,47 @@ select.form-control {
   outline-offset: -2px;
 }
 
+/* Status indicators specific styling */
+.status {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--radius-full);
+  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status--success {
+  background-color: rgba(var(--color-success-rgb), 0.15);
+  color: var(--color-success);
+  border: 1px solid rgba(var(--color-success-rgb), 0.25);
+}
+
+.status--error {
+  background-color: rgba(var(--color-error-rgb), 0.15);
+  color: var(--color-error);
+  border: 1px solid rgba(var(--color-error-rgb), 0.25);
+}
+
+.status--warning {
+  background-color: rgba(var(--color-warning-rgb), 0.15);
+  color: var(--color-warning);
+  border: 1px solid rgba(var(--color-warning-rgb), 0.25);
+}
+
+.status--info {
+  background-color: rgba(var(--color-info-rgb), 0.15);
+  color: var(--color-info);
+  border: 1px solid rgba(var(--color-info-rgb), 0.25);
+}
+
+/* Connection status improvements */
+.connection-status.loading {
+  background-color: var(--color-bg-8);
+}
+
 /* Print Styles */
 @media print {
   .header-actions,
@@ -1412,7 +1397,7 @@ select.form-control {
   .loading-overlay,
   .modal,
   .alert-container,
-  .demo-notice {
+  .connection-status {
     display: none !important;
   }
 
@@ -1423,5 +1408,14 @@ select.form-control {
   .card {
     box-shadow: none;
     border: 1px solid #ccc;
+  }
+
+  .data-table {
+    font-size: 10px;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: var(--space-4) var(--space-6);
   }
 }

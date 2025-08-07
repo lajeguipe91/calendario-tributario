@@ -1,36 +1,135 @@
-// Google Sheets Tax Calendar Application - Enhanced Version
-// Production Configuration
+// Enhanced Tax Calendar Application with User Management and Alarms
+// Configuration
 const CONFIG = {
     API_KEY: 'AIzaSyBdlizVp_hOembaoFJYE_rKHCvFtn9asok',
     CLIENT_ID: '341125602004-36tl0jfhtd7ce21csjun41fel085res8.apps.googleusercontent.com',
     SPREADSHEET_ID: '10L6aSKz8oPtq4ZpXcO921vCIciHWlCRqo_w5pAHc3yo',
     DISCOVERY_DOC: 'https://sheets.googleapis.com/$discovery/rest?version=v4',
     SCOPES: 'https://www.googleapis.com/auth/spreadsheets',
-    RANGE: 'DATA!A:I'
+    DATA_RANGE: 'DATA!A:I',
+    USERS_RANGE: 'USUARIOS!A:E'
 };
+
+// Demo Data - Initialize immediately
+const DEMO_USERS = [
+    {
+        user: 'admin',
+        password: 'admin123',
+        role: 'Administrador',
+        companies: 'ACME Corp;Tech Solutions;Global Trading',
+        email: 'admin@empresa.com'
+    },
+    {
+        user: 'juan.perez',
+        password: 'user123',
+        role: 'Responsable',
+        companies: 'ACME Corp;Tech Solutions',
+        email: 'juan.perez@empresa.com'
+    },
+    {
+        user: 'maria.garcia',
+        password: 'user456',
+        role: 'Responsable',
+        companies: 'Global Trading',
+        email: 'maria.garcia@empresa.com'
+    }
+];
+
+const DEMO_DATA = [
+    {
+        rowIndex: 2,
+        empresa: 'ACME Corp',
+        abreviatura: 'IGV-M',
+        responsable: 'Juan Pérez',
+        entidad: 'SUNAT',
+        obligacion: 'IGV Mensual',
+        periodo: 'Mensual',
+        ano: '2025',
+        fechaLimite: '2025-01-12',
+        estado: 'pendiente'
+    },
+    {
+        rowIndex: 3,
+        empresa: 'Tech Solutions',
+        abreviatura: 'RTA-C',
+        responsable: 'María García',
+        entidad: 'SUNAT',
+        obligacion: 'Renta a Cuenta',
+        periodo: 'Mensual',
+        ano: '2025',
+        fechaLimite: '2025-01-12',
+        estado: 'presentada'
+    },
+    {
+        rowIndex: 4,
+        empresa: 'Global Trading',
+        abreviatura: 'ESS-C',
+        responsable: 'Carlos López',
+        entidad: 'ESSALUD',
+        obligacion: 'Contribuciones Sociales',
+        periodo: 'Mensual',
+        ano: '2025',
+        fechaLimite: '2025-01-15',
+        estado: 'pendiente'
+    },
+    {
+        rowIndex: 5,
+        empresa: 'ACME Corp',
+        abreviatura: 'PDT-621',
+        responsable: 'Juan Pérez',
+        entidad: 'SUNAT',
+        obligacion: 'PDT 621 IGV-Renta',
+        periodo: 'Mensual',
+        ano: '2025',
+        fechaLimite: '2025-01-17',
+        estado: 'vencida'
+    },
+    {
+        rowIndex: 6,
+        empresa: 'Tech Solutions',
+        abreviatura: 'LIC-M',
+        responsable: 'María García',
+        entidad: 'Municipalidad de Lima',
+        obligacion: 'Licencia Municipal',
+        periodo: 'Anual',
+        ano: '2025',
+        fechaLimite: '2025-02-28',
+        estado: 'no_aplica'
+    },
+    {
+        rowIndex: 7,
+        empresa: 'Global Trading',
+        abreviatura: 'CTS-S',
+        responsable: 'Carlos López',
+        entidad: 'SUNAT',
+        obligacion: 'CTS Semestral',
+        periodo: 'Semestral',
+        ano: '2025',
+        fechaLimite: '2025-02-15',
+        estado: 'pendiente'
+    }
+];
 
 // Global State Management
 class AppState {
     constructor() {
         this.isSignedIn = false;
-        this.gsiInited = false;
-        this.gapiInited = false;
-        this.isLoading = false;
+        this.currentUser = null;
+        this.users = [...DEMO_USERS]; // Initialize immediately
         this.data = [];
         this.filteredData = [];
-        this.filters = {
-            empresa: new Set(),
-            entidad: new Set(),
-            responsable: new Set(),
-            estado: new Set()
-        };
+        this.userFilteredData = [];
         this.calendar = null;
         this.currentEditingRow = null;
-        this.selectedRows = new Set();
+        this.columnOrder = ['abreviatura', 'entidad', 'obligacion', 'fechaLimite', 'estado'];
+        this.columnWidths = {};
+        this.sortConfig = { column: null, direction: null };
+        this.quickFilter = null;
+        this.selectedEmails = new Set();
+        this.pendingAlarms = [];
+        this.isLoading = false;
         this.initializationAttempts = 0;
         this.maxInitAttempts = 3;
-        this.filtersVisible = true;
-        this.tableVisible = true;
     }
 
     setLoading(loading) {
@@ -77,45 +176,6 @@ class AppState {
 // Global state instance
 const appState = new AppState();
 
-// Date parsing utility
-function parseDate(dateString) {
-    if (!dateString) return null;
-    
-    // Try different date formats
-    const formats = [
-        /^\d{4}-\d{2}-\d{2}$/, // YYYY-MM-DD
-        /^\d{2}\/\d{2}\/\d{4}$/, // DD/MM/YYYY
-        /^\d{1,2}\/\d{1,2}\/\d{4}$/, // D/M/YYYY or DD/M/YYYY
-    ];
-    
-    try {
-        // First try direct parsing
-        let date = new Date(dateString);
-        if (!isNaN(date.getTime())) {
-            return date;
-        }
-        
-        // Try DD/MM/YYYY format
-        if (formats[1].test(dateString) || formats[2].test(dateString)) {
-            const parts = dateString.split('/');
-            if (parts.length === 3) {
-                const day = parseInt(parts[0], 10);
-                const month = parseInt(parts[1], 10) - 1; // Month is 0-indexed
-                const year = parseInt(parts[2], 10);
-                date = new Date(year, month, day);
-                if (!isNaN(date.getTime())) {
-                    return date;
-                }
-            }
-        }
-        
-        return null;
-    } catch (error) {
-        console.warn('Error parsing date:', dateString, error);
-        return null;
-    }
-}
-
 // Alert System
 class AlertManager {
     static show(message, type = 'info', duration = 5000) {
@@ -150,511 +210,335 @@ class AlertManager {
         }
     }
 
-    static success(message) {
-        this.show(message, 'success');
+    static success(message) { this.show(message, 'success'); }
+    static error(message) { this.show(message, 'error', 8000); }
+    static warning(message) { this.show(message, 'warning'); }
+    static info(message) { this.show(message, 'info'); }
+}
+
+// Authentication System
+class AuthManager {
+    static async authenticate(username, password) {
+        try {
+            const user = appState.users.find(u => 
+                u.user === username && u.password === password
+            );
+
+            if (!user) {
+                throw new Error('Credenciales incorrectas');
+            }
+
+            appState.currentUser = {
+                ...user,
+                companies: user.companies.split(';').map(c => c.trim())
+            };
+
+            return appState.currentUser;
+        } catch (error) {
+            console.error('Authentication error:', error);
+            throw error;
+        }
     }
 
-    static error(message) {
-        this.show(message, 'error', 8000);
+    static logout() {
+        appState.currentUser = null;
+        showLoginScreen();
     }
 
-    static warning(message) {
-        this.show(message, 'warning');
-    }
-
-    static info(message) {
-        this.show(message, 'info');
+    static hasPermission(permission) {
+        if (!appState.currentUser) return false;
+        if (appState.currentUser.role === 'Administrador') return true;
+        
+        switch (permission) {
+            case 'manage_users':
+            case 'approve_alarms':
+                return false;
+            case 'manage_own_profile':
+            case 'request_alarms':
+                return true;
+            default:
+                return false;
+        }
     }
 }
 
-// Google APIs Initialization
-async function initializeGoogleAPIs() {
-    try {
-        console.log('Initializing Google APIs... Attempt:', appState.initializationAttempts + 1);
-        appState.initializationAttempts++;
-        appState.updateConnectionStatus('loading', 'Inicializando APIs de Google...');
+// Login System - Fixed and Simplified
+function setupLogin() {
+    console.log('Setting up login with', appState.users.length, 'users');
+    
+    const loginForm = document.getElementById('loginForm');
+    const loginUser = document.getElementById('loginUser');
+    const errorDiv = document.getElementById('loginError');
 
-        if (appState.initializationAttempts > appState.maxInitAttempts) {
-            throw new Error('Se agotaron los intentos de conexión');
-        }
+    if (!loginUser) {
+        console.error('Login user select not found');
+        return;
+    }
 
-        // Wait for gapi to be available
-        let gapiReady = false;
-        let attempts = 0;
-        const maxAttempts = 50;
+    // Force populate dropdown immediately
+    populateUserDropdown();
 
-        while (!gapiReady && attempts < maxAttempts) {
-            if (typeof gapi !== 'undefined') {
-                gapiReady = true;
-                break;
+    if (loginForm) {
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const username = loginUser.value;
+            const password = document.getElementById('loginPassword').value;
+
+            console.log('Login attempt:', username);
+
+            if (!username) {
+                showLoginError('Por favor seleccione un usuario');
+                return;
             }
-            await new Promise(resolve => setTimeout(resolve, 100));
-            attempts++;
-        }
 
-        if (!gapiReady) {
-            throw new Error('Google API library no disponible');
-        }
-
-        // Initialize gapi
-        await Promise.race([
-            new Promise((resolve, reject) => {
-                gapi.load('client', {
-                    callback: resolve,
-                    onerror: () => reject(new Error('Error cargando cliente GAPI'))
-                });
-            }),
-            new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout cargando GAPI')), 5000)
-            )
-        ]);
-
-        await Promise.race([
-            gapi.client.init({
-                apiKey: CONFIG.API_KEY,
-                discoveryDocs: [CONFIG.DISCOVERY_DOC],
-            }),
-            new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout inicializando cliente GAPI')), 5000)
-            )
-        ]);
-
-        appState.gapiInited = true;
-        console.log('GAPI initialized successfully');
-
-        // Initialize Google Sign-In
-        let googleAccountsReady = false;
-        attempts = 0;
-
-        while (!googleAccountsReady && attempts < maxAttempts) {
-            if (typeof google !== 'undefined' && google.accounts) {
-                googleAccountsReady = true;
-                break;
+            if (!password) {
+                showLoginError('Por favor ingrese la contraseña');
+                return;
             }
-            await new Promise(resolve => setTimeout(resolve, 100));
-            attempts++;
-        }
 
-        if (googleAccountsReady) {
             try {
-                google.accounts.id.initialize({
-                    client_id: CONFIG.CLIENT_ID,
-                    callback: handleCredentialResponse,
-                });
-                appState.gsiInited = true;
-                console.log('GSI initialized successfully');
-            } catch (gsiError) {
-                console.warn('GSI initialization failed, but continuing:', gsiError);
-                appState.gsiInited = false;
+                appState.setLoading(true);
+                hideLoginError();
+
+                const user = await AuthManager.authenticate(username, password);
+                
+                console.log('Login successful for:', user.user);
+                showMainApp();
+                await loadData();
+                
+                AlertManager.success(`Bienvenido, ${user.user}`);
+            } catch (error) {
+                showLoginError(error.message);
+            } finally {
+                appState.setLoading(false);
             }
-        } else {
-            console.warn('Google Sign-In library not available, but continuing');
-            appState.gsiInited = false;
-        }
-
-        appState.updateConnectionStatus('success', 'APIs de Google inicializadas correctamente');
-        setupAuthButton();
-        loadDemoData();
-
-    } catch (error) {
-        console.error('Error initializing Google APIs:', error);
-        appState.updateConnectionStatus('error', `Error al inicializar: ${error.message}`);
-        AlertManager.error(`Error al conectar con Google: ${error.message}`);
-        setupAuthButton();
-        loadDemoData();
-    }
-}
-
-// Handle credential response
-function handleCredentialResponse(response) {
-    console.log('Credential response received');
-    handleAuthClick();
-}
-
-// Setup auth button and other UI controls
-function setupAuthButton() {
-    const authBtn = document.getElementById('authBtn');
-    const signoutBtn = document.getElementById('signoutBtn');
-    const retryBtn = document.getElementById('retryBtn');
-    const refreshBtn = document.getElementById('refreshBtn');
-    const toggleFiltersBtn = document.getElementById('toggleFiltersBtn');
-    const toggleTableBtn = document.getElementById('toggleTableBtn');
-
-    if (authBtn) {
-        authBtn.addEventListener('click', handleAuthClick);
-    }
-    if (signoutBtn) {
-        signoutBtn.addEventListener('click', handleSignoutClick);
-    }
-    if (retryBtn) {
-        retryBtn.addEventListener('click', () => {
-            appState.updateConnectionStatus('loading', 'Reintentando conexión...');
-            appState.initializationAttempts = 0;
-            initializeGoogleAPIs();
         });
     }
-    if (refreshBtn) {
-        refreshBtn.addEventListener('click', refreshData);
-    }
-    if (toggleFiltersBtn) {
-        toggleFiltersBtn.addEventListener('click', toggleFilters);
-    }
-    if (toggleTableBtn) {
-        toggleTableBtn.addEventListener('click', toggleTable);
-    }
-
-    updateAuthUI();
 }
 
-// Refresh data function
-async function refreshData() {
-    AlertManager.info('Actualizando datos...');
-    appState.setLoading(true);
+function populateUserDropdown() {
+    const loginUser = document.getElementById('loginUser');
+    if (!loginUser) return;
+
+    console.log('Populating dropdown with users:', appState.users);
+
+    // Clear existing options
+    loginUser.innerHTML = '';
+    
+    // Add default option
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'Seleccionar usuario...';
+    loginUser.appendChild(defaultOption);
+
+    // Add user options
+    appState.users.forEach(user => {
+        const option = document.createElement('option');
+        option.value = user.user;
+        option.textContent = `${user.user} (${user.role})`;
+        loginUser.appendChild(option);
+        console.log('Added user option:', option.textContent);
+    });
+
+    console.log('Dropdown populated with', loginUser.options.length, 'options');
+}
+
+function showLoginError(message) {
+    const errorDiv = document.getElementById('loginError');
+    if (errorDiv) {
+        errorDiv.textContent = message;
+        errorDiv.classList.remove('hidden');
+    }
+}
+
+function hideLoginError() {
+    const errorDiv = document.getElementById('loginError');
+    if (errorDiv) {
+        errorDiv.classList.add('hidden');
+    }
+}
+
+function showLoginScreen() {
+    const loginScreen = document.getElementById('loginScreen');
+    const mainApp = document.getElementById('mainApp');
+    
+    if (loginScreen) loginScreen.classList.remove('hidden');
+    if (mainApp) mainApp.classList.add('hidden');
+    
+    // Clear any existing data
+    appState.currentUser = null;
+    appState.data = [];
+    appState.filteredData = [];
+    appState.userFilteredData = [];
+    
+    // Ensure dropdown is populated
+    setTimeout(populateUserDropdown, 100);
+}
+
+function showMainApp() {
+    const loginScreen = document.getElementById('loginScreen');
+    const mainApp = document.getElementById('mainApp');
+    
+    if (loginScreen) loginScreen.classList.add('hidden');
+    if (mainApp) mainApp.classList.remove('hidden');
+    
+    // Update user info in header
+    const userName = document.getElementById('currentUserName');
+    const userRole = document.getElementById('currentUserRole');
+    const userMgmtBtn = document.getElementById('userMgmtBtn');
+
+    if (userName && appState.currentUser) {
+        userName.textContent = appState.currentUser.user;
+    }
+    if (userRole && appState.currentUser) {
+        userRole.textContent = appState.currentUser.role;
+    }
+    
+    // Show user management button only for admins
+    if (userMgmtBtn && AuthManager.hasPermission('manage_users')) {
+        userMgmtBtn.classList.remove('hidden');
+    }
+}
+
+// Data Loading
+async function loadUsersFromSheets() {
     try {
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+            spreadsheetId: CONFIG.SPREADSHEET_ID,
+            range: CONFIG.USERS_RANGE,
+        });
+
+        const rows = response.result.values;
+        if (!rows || rows.length === 0) {
+            throw new Error('No users found in spreadsheet');
+        }
+
+        appState.users = rows.slice(1).map(row => ({
+            user: row[0] || '',
+            password: row[1] || '',
+            role: row[2] || 'Responsable',
+            companies: row[3] || '',
+            email: row[4] || ''
+        }));
+
+        console.log(`Loaded ${appState.users.length} users from sheets`);
+    } catch (error) {
+        console.warn('Failed to load users from sheets, using demo data:', error);
+        appState.users = [...DEMO_USERS];
+    }
+}
+
+async function loadData() {
+    try {
+        appState.setLoading(true);
+
         if (appState.isSignedIn) {
-            await loadSpreadsheetData();
+            await loadDataFromSheets();
         } else {
             loadDemoData();
         }
+
+        // Filter data by user's companies
+        filterDataByUserCompanies();
+        initializeInterface();
+
+    } catch (error) {
+        console.error('Error loading data:', error);
+        AlertManager.error('Error al cargar datos: ' + error.message);
+        loadDemoData();
+        filterDataByUserCompanies();
+        initializeInterface();
     } finally {
         appState.setLoading(false);
     }
 }
 
-// Toggle filters visibility
-function toggleFilters() {
-    const panel = document.getElementById('filtersPanel');
-    if (panel) {
-        appState.filtersVisible = !appState.filtersVisible;
-        if (appState.filtersVisible) {
-            panel.classList.remove('collapsed');
-        } else {
-            panel.classList.add('collapsed');
-        }
-        AlertManager.info(`Filtros ${appState.filtersVisible ? 'mostrados' : 'ocultos'}`);
-    }
-}
-
-// Toggle table visibility
-function toggleTable() {
-    const panel = document.getElementById('tablePanel');
-    if (panel) {
-        appState.tableVisible = !appState.tableVisible;
-        if (appState.tableVisible) {
-            panel.classList.remove('collapsed');
-        } else {
-            panel.classList.add('collapsed');
-        }
-        AlertManager.info(`Listado ${appState.tableVisible ? 'mostrado' : 'oculto'}`);
-    }
-}
-
-// Handle authorization
-async function handleAuthClick() {
-    if (!appState.gapiInited) {
-        AlertManager.error('Las APIs de Google no están inicializadas');
-        return;
-    }
-
-    try {
-        appState.setLoading(true);
-        appState.updateConnectionStatus('loading', 'Autenticando...');
-
-        if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
-            throw new Error('OAuth library no disponible');
-        }
-
-        const tokenClient = google.accounts.oauth2.initTokenClient({
-            client_id: CONFIG.CLIENT_ID,
-            scope: CONFIG.SCOPES,
-            callback: async (response) => {
-                try {
-                    if (response.error) {
-                        throw new Error('Authorization failed: ' + response.error);
-                    }
-                    
-                    console.log('Authorization successful');
-                    appState.isSignedIn = true;
-                    updateAuthUI();
-                    appState.updateConnectionStatus('success', 'Conectado a Google Sheets');
-                    
-                    await loadSpreadsheetData();
-                    AlertManager.success('Conectado exitosamente a Google Sheets');
-                } catch (callbackError) {
-                    console.error('Authorization callback error:', callbackError);
-                    AlertManager.error('Error en la autorización: ' + callbackError.message);
-                    appState.updateConnectionStatus('error', 'Error de autorización');
-                } finally {
-                    appState.setLoading(false);
-                }
-            },
-            error_callback: (error) => {
-                console.error('Authorization error:', error);
-                appState.setLoading(false);
-                appState.updateConnectionStatus('error', 'Error de autorización');
-                AlertManager.error('Error en la autorización. Usando datos de demostración.');
-            }
-        });
-
-        tokenClient.requestAccessToken();
-
-    } catch (error) {
-        console.error('Auth error:', error);
-        appState.setLoading(false);
-        appState.updateConnectionStatus('error', 'Error de autenticación');
-        AlertManager.error('Error de autenticación: ' + error.message + '. Usando datos de demostración.');
-    }
-}
-
-// Handle signout
-function handleSignoutClick() {
-    try {
-        const token = gapi.client.getToken();
-        if (token !== null) {
-            google.accounts.oauth2.revoke(token.access_token);
-            gapi.client.setToken('');
-        }
-    } catch (error) {
-        console.warn('Error during signout:', error);
-    }
-    
-    appState.isSignedIn = false;
-    appState.data = [];
-    appState.filteredData = [];
-    appState.selectedRows.clear();
-    
-    updateAuthUI();
-    clearAllData();
-    loadDemoData();
-    appState.updateConnectionStatus('info', 'Desconectado de Google Sheets');
-    AlertManager.info('Sesión cerrada. Mostrando datos de demostración.');
-}
-
-// Update auth UI
-function updateAuthUI() {
-    const authBtn = document.getElementById('authBtn');
-    const authText = document.getElementById('authText');
-    const signoutBtn = document.getElementById('signoutBtn');
-
-    if (authBtn && signoutBtn) {
-        if (appState.isSignedIn) {
-            authBtn.classList.add('hidden');
-            signoutBtn.classList.remove('hidden');
-        } else {
-            authBtn.classList.remove('hidden');
-            signoutBtn.classList.add('hidden');
-            if (authText) authText.textContent = 'Conectar a Google';
-        }
-    }
-}
-
-// Load spreadsheet data
-async function loadSpreadsheetData() {
-    try {
-        console.log('Loading spreadsheet data...');
-
-        const response = await gapi.client.sheets.spreadsheets.values.get({
-            spreadsheetId: CONFIG.SPREADSHEET_ID,
-            range: CONFIG.RANGE,
-        });
-
-        const rows = response.result.values;
-        if (!rows || rows.length === 0) {
-            throw new Error('No se encontraron datos en la hoja DATA');
-        }
-
-        // Process data (skip header row)
-        const headers = rows[0];
-        let validRows = 0;
-        let invalidRows = 0;
-        
-        appState.data = rows.slice(1).map((row, index) => {
-            const fechaLimite = parseDate(row[7] || '');
-            
-            if (!fechaLimite) {
-                invalidRows++;
-                console.warn(`Fila ${index + 2}: Fecha inválida "${row[7]}"`);
-            } else {
-                validRows++;
-            }
-
-            return {
-                rowIndex: index + 2,
-                empresa: row[0] || '',
-                abreviatura: row[1] || '',
-                responsable: row[2] || '',
-                entidad: row[3] || '',
-                obligacion: row[4] || '',
-                periodo: row[5] || '',
-                ano: row[6] || new Date().getFullYear().toString(),
-                fechaLimite: fechaLimite,
-                fechaLimiteString: row[7] || '',
-                estado: row[8] || 'Pendiente',
-                periodoCompleto: `${row[5] || ''}-${row[6] || new Date().getFullYear()}`
-            };
-        });
-
-        console.log(`Loaded ${appState.data.length} records (${validRows} valid, ${invalidRows} with date issues)`);
-        
-        if (invalidRows > 0) {
-            AlertManager.warning(`${invalidRows} registros tienen fechas inválidas y pueden no mostrarse correctamente en el calendario`);
-        }
-
-        appState.filteredData = [...appState.data];
-        initializeInterface();
-        AlertManager.success(`${validRows} obligaciones cargadas desde Google Sheets`);
-
-    } catch (error) {
-        console.error('Error loading data:', error);
-        AlertManager.error('Error al cargar datos de Google Sheets: ' + error.message + '. Usando datos de demostración.');
-        loadDemoData();
-    }
-}
-
-// Load demo data
-function loadDemoData() {
-    console.log('Loading demo data...');
-    
-    appState.data = [
-        {
-            rowIndex: 2,
-            empresa: 'ABC Corp',
-            abreviatura: 'ABC',
-            responsable: 'Contador General',
-            entidad: 'SUNAT',
-            obligacion: 'Declaración mensual de IGV',
-            periodo: 'Enero',
-            ano: '2025',
-            fechaLimite: new Date('2025-01-12'),
-            fechaLimiteString: '2025-01-12',
-            estado: 'Pendiente',
-            periodoCompleto: 'Enero-2025'
-        },
-        {
-            rowIndex: 3,
-            empresa: 'XYZ Ltda',
-            abreviatura: 'XYZ',
-            responsable: 'Gerente Financiero',
-            entidad: 'SUNAT',
-            obligacion: 'Pago a cuenta de Impuesto a la Renta',
-            periodo: 'Enero',
-            ano: '2025',
-            fechaLimite: new Date('2025-01-12'),
-            fechaLimiteString: '2025-01-12',
-            estado: 'Presentada',
-            periodoCompleto: 'Enero-2025'
-        },
-        {
-            rowIndex: 4,
-            empresa: 'DEF S.A.',
-            abreviatura: 'DEF',
-            responsable: 'RRHH',
-            entidad: 'ESSALUD',
-            obligacion: 'Declaración y pago de contribuciones',
-            periodo: 'Enero',
-            ano: '2025',
-            fechaLimite: new Date('2025-01-15'),
-            fechaLimiteString: '2025-01-15',
-            estado: 'Pendiente',
-            periodoCompleto: 'Enero-2025'
-        },
-        {
-            rowIndex: 5,
-            empresa: 'GHI Inc',
-            abreviatura: 'GHI',
-            responsable: 'Contador',
-            entidad: 'SUNAT',
-            obligacion: 'Presentación de PDT 621',
-            periodo: 'Diciembre',
-            ano: '2024',
-            fechaLimite: new Date('2024-12-30'),
-            fechaLimiteString: '2024-12-30',
-            estado: 'Pendiente',
-            periodoCompleto: 'Diciembre-2024'
-        },
-        {
-            rowIndex: 6,
-            empresa: 'JKL Corp',
-            abreviatura: 'JKL',
-            responsable: 'Legal',
-            entidad: 'Municipalidad',
-            obligacion: 'Renovación de licencia municipal',
-            periodo: 'Anual',
-            ano: '2025',
-            fechaLimite: new Date('2025-01-20'),
-            fechaLimiteString: '2025-01-20',
-            estado: 'No aplica',
-            periodoCompleto: 'Anual-2025'
-        }
-    ];
-
-    appState.filteredData = [...appState.data];
-    initializeInterface();
-    
-    if (!appState.isSignedIn) {
-        AlertManager.warning('Usando datos de demostración. Conéctate a Google Sheets para datos reales.');
-    }
-}
-
-// Initialize interface components
-function initializeInterface() {
-    setupFilters();
-    renderTable();
-    setupCalendar();
-    updateStats();
-    setupBulkActions();
-}
-
-// Setup filters with unique values and select all
-function setupFilters() {
-    const empresas = new Set();
-    const entidades = new Set();
-    const responsables = new Set();
-    const estados = new Set();
-
-    appState.data.forEach(item => {
-        if (item.empresa) empresas.add(item.empresa);
-        if (item.entidad) entidades.add(item.entidad);
-        if (item.responsable) responsables.add(item.responsable);
-        if (item.estado) estados.add(item.estado);
+async function loadDataFromSheets() {
+    const response = await gapi.client.sheets.spreadsheets.values.get({
+        spreadsheetId: CONFIG.SPREADSHEET_ID,
+        range: CONFIG.DATA_RANGE,
     });
 
-    createFilterCheckboxes('empresaFilters', empresas, 'empresa');
-    createFilterCheckboxes('entidadFilters', entidades, 'entidad');
-    createFilterCheckboxes('responsableFilters', responsables, 'responsable');
-    createFilterCheckboxes('estadoFilters', estados, 'estado');
+    const rows = response.result.values;
+    if (!rows || rows.length === 0) {
+        throw new Error('No data found in spreadsheet');
+    }
+
+    appState.data = rows.slice(1).map((row, index) => ({
+        rowIndex: index + 2,
+        empresa: row[0] || '',
+        abreviatura: row[1] || '',
+        responsable: row[2] || '',
+        entidad: row[3] || '',
+        obligacion: row[4] || '',
+        periodo: row[5] || '',
+        ano: row[6] || '',
+        fechaLimite: row[7] || '',
+        estado: row[8] || 'pendiente'
+    }));
+
+    AlertManager.success(`${appState.data.length} registros cargados desde Google Sheets`);
+}
+
+function loadDemoData() {
+    appState.data = [...DEMO_DATA];
+    console.log('Loaded demo data:', appState.data.length, 'records');
+    if (!appState.isSignedIn) {
+        AlertManager.warning('Usando datos de demostración. Los datos reales requieren conexión a Google Sheets.');
+    }
+}
+
+function filterDataByUserCompanies() {
+    if (!appState.currentUser) return;
+
+    appState.userFilteredData = appState.data.filter(item => 
+        appState.currentUser.companies.includes(item.empresa)
+    );
+    
+    appState.filteredData = [...appState.userFilteredData];
+    
+    console.log(`Filtered to ${appState.filteredData.length} records for user companies:`, 
+                appState.currentUser.companies);
+}
+
+// Interface Initialization
+function initializeInterface() {
+    setupFilters();
+    setupTable();
+    setupCalendar();
+    setupModals();
+    updateStats();
+    setupDateFilters();
+}
+
+// Enhanced Filters
+function setupFilters() {
+    const entities = new Set();
+    const obligations = new Set();
+    const statuses = new Set();
+
+    appState.userFilteredData.forEach(item => {
+        if (item.entidad) entities.add(item.entidad);
+        if (item.obligacion) obligations.add(item.obligacion);
+        if (item.estado) statuses.add(item.estado);
+    });
+
+    createFilterCheckboxes('entityFilters', entities, 'entities');
+    createFilterCheckboxes('obligationFilters', obligations, 'obligations');
+    createFilterCheckboxes('statusFilters', statuses, 'statuses');
 
     setupFilterSearch();
     setupFilterActions();
+    setupStatCardFilters();
 }
 
-// Create filter checkboxes with "Seleccionar todo" option
 function createFilterCheckboxes(containerId, items, filterType) {
     const container = document.getElementById(containerId);
     if (!container) return;
     
     container.innerHTML = '';
 
-    // Add "Seleccionar todo" checkbox
-    const selectAllDiv = document.createElement('div');
-    selectAllDiv.className = 'filter-checkbox select-all';
-    selectAllDiv.innerHTML = `
-        <input type="checkbox" id="${filterType}_select_all" value="__all__" checked>
-        <label for="${filterType}_select_all">Seleccionar todo</label>
-    `;
-    
-    const selectAllCheckbox = selectAllDiv.querySelector('input');
-    selectAllCheckbox.addEventListener('change', (e) => {
-        const isChecked = e.target.checked;
-        container.querySelectorAll('input[type="checkbox"]:not([value="__all__"])').forEach(cb => {
-            cb.checked = isChecked;
-        });
-        applyFilters();
-    });
-    
-    container.appendChild(selectAllDiv);
-
-    // Add individual item checkboxes
     Array.from(items).sort().forEach(item => {
         const div = document.createElement('div');
         div.className = 'filter-checkbox';
@@ -664,43 +548,29 @@ function createFilterCheckboxes(containerId, items, filterType) {
         `;
         
         const checkbox = div.querySelector('input');
-        checkbox.addEventListener('change', () => {
-            // Update "Seleccionar todo" state
-            const allCheckboxes = container.querySelectorAll('input[type="checkbox"]:not([value="__all__"])');
-            const checkedCheckboxes = container.querySelectorAll('input[type="checkbox"]:not([value="__all__"]):checked');
-            const selectAllCb = container.querySelector('input[value="__all__"]');
-            
-            if (selectAllCb) {
-                selectAllCb.checked = allCheckboxes.length === checkedCheckboxes.length;
-                selectAllCb.indeterminate = checkedCheckboxes.length > 0 && checkedCheckboxes.length < allCheckboxes.length;
-            }
-            
-            applyFilters();
-        });
+        checkbox.addEventListener('change', applyFilters);
         
         container.appendChild(div);
     });
 }
 
-// Setup filter search
 function setupFilterSearch() {
-    const searches = ['empresaSearch', 'entidadSearch', 'responsableSearch'];
-    const containers = ['empresaFilters', 'entidadFilters', 'responsableFilters'];
-    
-    searches.forEach((searchId, index) => {
-        const searchElement = document.getElementById(searchId);
-        if (searchElement) {
-            searchElement.addEventListener('input', (e) => filterCheckboxes(containers[index], e.target.value));
-        }
-    });
+    const entitySearch = document.getElementById('entitySearch');
+    const obligationSearch = document.getElementById('obligationSearch');
+
+    if (entitySearch) {
+        entitySearch.addEventListener('input', (e) => filterCheckboxes('entityFilters', e.target.value));
+    }
+    if (obligationSearch) {
+        obligationSearch.addEventListener('input', (e) => filterCheckboxes('obligationFilters', e.target.value));
+    }
 }
 
-// Filter checkboxes based on search
 function filterCheckboxes(containerId, searchTerm) {
     const container = document.getElementById(containerId);
     if (!container) return;
     
-    const checkboxes = container.querySelectorAll('.filter-checkbox:not(.select-all)');
+    const checkboxes = container.querySelectorAll('.filter-checkbox');
     
     checkboxes.forEach(checkbox => {
         const label = checkbox.querySelector('label').textContent.toLowerCase();
@@ -709,362 +579,420 @@ function filterCheckboxes(containerId, searchTerm) {
     });
 }
 
-// Setup filter actions
 function setupFilterActions() {
     const clearBtn = document.getElementById('clearFilters');
-    if (clearBtn) {
-        clearBtn.addEventListener('click', clearFilters);
-    }
+    const applyBtn = document.getElementById('applyFilters');
+
+    if (clearBtn) clearBtn.addEventListener('click', clearFilters);
+    if (applyBtn) applyBtn.addEventListener('click', applyFilters);
 }
 
-// Clear all filters
+function setupStatCardFilters() {
+    const statCards = document.querySelectorAll('.stat-card');
+    statCards.forEach(card => {
+        card.addEventListener('click', () => {
+            const filter = card.dataset.filter;
+            
+            // Remove active class from all cards
+            statCards.forEach(c => c.classList.remove('active'));
+            
+            if (appState.quickFilter === filter) {
+                // Deactivate current filter
+                appState.quickFilter = null;
+            } else {
+                // Activate new filter
+                appState.quickFilter = filter;
+                card.classList.add('active');
+            }
+            
+            applyFilters();
+        });
+    });
+}
+
 function clearFilters() {
+    appState.quickFilter = null;
+    
     document.querySelectorAll('.filter-checkbox input[type="checkbox"]').forEach(checkbox => {
         checkbox.checked = true;
-        checkbox.indeterminate = false;
     });
-    
     document.querySelectorAll('.filter-search').forEach(search => {
         search.value = '';
     });
+    document.querySelectorAll('.stat-card').forEach(card => {
+        card.classList.remove('active');
+    });
     
     // Reset filter visibility
-    document.querySelectorAll('.filter-checkbox:not(.select-all)').forEach(checkbox => {
+    document.querySelectorAll('.filter-checkbox').forEach(checkbox => {
         checkbox.style.display = 'flex';
     });
     
     applyFilters();
 }
 
-// Apply filters with live updates (removed excessive loading)
 function applyFilters() {
-    const selectedEmpresas = getSelectedFilters('empresa');
-    const selectedEntidades = getSelectedFilters('entidad');
-    const selectedResponsables = getSelectedFilters('responsable');
-    const selectedEstados = getSelectedFilters('estado');
+    const selectedEntities = getSelectedFilters('entities');
+    const selectedObligations = getSelectedFilters('obligations');
+    const selectedStatuses = getSelectedFilters('statuses');
 
-    appState.filteredData = appState.data.filter(item => {
-        return selectedEmpresas.has(item.empresa) &&
-               selectedEntidades.has(item.entidad) &&
-               selectedResponsables.has(item.responsable) &&
-               selectedEstados.has(item.estado);
+    let filtered = appState.userFilteredData.filter(item => {
+        return selectedEntities.has(item.entidad) &&
+               selectedObligations.has(item.obligacion) &&
+               selectedStatuses.has(item.estado);
     });
 
+    // Apply quick filter from stat cards
+    if (appState.quickFilter) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        filtered = filtered.filter(item => {
+            switch (appState.quickFilter) {
+                case 'proximos':
+                    if (!item.fechaLimite || item.estado === 'presentada') return false;
+                    const dueDate = new Date(item.fechaLimite);
+                    const diffTime = dueDate - today;
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    return diffDays >= 0 && diffDays <= 30;
+                    
+                case 'vencidos':
+                    if (!item.fechaLimite || item.estado === 'presentada') return false;
+                    const overDueDate = new Date(item.fechaLimite);
+                    return overDueDate < today;
+                    
+                case 'all':
+                default:
+                    return true;
+            }
+        });
+    }
+
+    appState.filteredData = filtered;
     renderTable();
     updateCalendar();
     updateStats();
-    updateBulkActionsBar();
+    
+    AlertManager.info(`${appState.filteredData.length} registros mostrados`);
 }
 
-// Get selected filters
 function getSelectedFilters(filterType) {
     const selected = new Set();
-    document.querySelectorAll(`input[id^="${filterType}_"]:checked:not([value="__all__"])`).forEach(checkbox => {
+    document.querySelectorAll(`input[id^="${filterType}_"]:checked`).forEach(checkbox => {
         selected.add(checkbox.value);
     });
     return selected;
 }
 
-// Render table with bulk selection
-function renderTable() {
+// Date Filters for Table
+function setupDateFilters() {
+    const yearFilter = document.getElementById('yearFilter');
+    const monthFilter = document.getElementById('monthFilter');
+    const yearValue = document.getElementById('yearValue');
+    const monthValue = document.getElementById('monthValue');
+
+    const monthNames = [
+        'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+        'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+    ];
+
+    if (yearFilter && monthFilter) {
+        yearFilter.addEventListener('input', () => {
+            if (yearValue) yearValue.textContent = yearFilter.value;
+            applyDateFilter();
+        });
+
+        monthFilter.addEventListener('input', () => {
+            if (monthValue) monthValue.textContent = monthNames[parseInt(monthFilter.value) - 1];
+            applyDateFilter();
+        });
+    }
+}
+
+function applyDateFilter() {
+    const year = document.getElementById('yearFilter')?.value;
+    const month = document.getElementById('monthFilter')?.value;
+    
+    if (!year || !month) return;
+    
+    const filteredByDate = appState.filteredData.filter(item => {
+        if (!item.fechaLimite) return false;
+        
+        const itemDate = new Date(item.fechaLimite);
+        const itemYear = itemDate.getFullYear().toString();
+        const itemMonth = (itemDate.getMonth() + 1).toString();
+        
+        return itemYear === year && itemMonth === month;
+    });
+    
+    renderTable(filteredByDate);
+}
+
+// Enhanced Table with Column Management
+function setupTable() {
+    setupTableHeader();
+    renderTable();
+}
+
+function setupTableHeader() {
+    const header = document.getElementById('tableHeader');
+    if (!header) return;
+
+    // Make columns draggable and sortable
+    const ths = header.querySelectorAll('th[data-column]');
+    ths.forEach(th => {
+        const column = th.dataset.column;
+        
+        // Setup sorting
+        if (th.classList.contains('sortable')) {
+            th.addEventListener('click', (e) => {
+                // Don't sort if clicking on resize handle
+                if (e.target.classList.contains('resize-handle')) return;
+                toggleSort(column);
+            });
+        }
+
+        // Setup resizing
+        if (th.classList.contains('resizable')) {
+            setupColumnResize(th);
+        }
+
+        // Setup dragging
+        setupColumnDrag(th);
+    });
+}
+
+function toggleSort(column) {
+    if (appState.sortConfig.column === column) {
+        // Toggle direction
+        if (appState.sortConfig.direction === 'asc') {
+            appState.sortConfig.direction = 'desc';
+        } else if (appState.sortConfig.direction === 'desc') {
+            appState.sortConfig = { column: null, direction: null };
+        } else {
+            appState.sortConfig.direction = 'asc';
+        }
+    } else {
+        appState.sortConfig = { column, direction: 'asc' };
+    }
+
+    updateSortIcons();
+    renderTable();
+}
+
+function updateSortIcons() {
+    const ths = document.querySelectorAll('th.sortable');
+    ths.forEach(th => {
+        th.classList.remove('asc', 'desc');
+        if (th.dataset.column === appState.sortConfig.column) {
+            th.classList.add(appState.sortConfig.direction || '');
+        }
+    });
+}
+
+function setupColumnResize(th) {
+    const resizeHandle = th.querySelector('.resize-handle');
+    if (!resizeHandle) return;
+
+    let startX, startWidth, isResizing = false;
+
+    resizeHandle.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startX = e.clientX;
+        startWidth = th.offsetWidth;
+        resizeHandle.classList.add('active');
+        
+        document.addEventListener('mousemove', handleResize);
+        document.addEventListener('mouseup', stopResize);
+        e.preventDefault();
+        e.stopPropagation();
+    });
+
+    function handleResize(e) {
+        if (!isResizing) return;
+        const width = startWidth + (e.clientX - startX);
+        th.style.width = Math.max(100, width) + 'px';
+        appState.columnWidths[th.dataset.column] = th.style.width;
+    }
+
+    function stopResize() {
+        isResizing = false;
+        resizeHandle.classList.remove('active');
+        document.removeEventListener('mousemove', handleResize);
+        document.removeEventListener('mouseup', stopResize);
+    }
+}
+
+function setupColumnDrag(th) {
+    const thContent = th.querySelector('.th-content');
+    if (!thContent) return;
+
+    th.draggable = true;
+    
+    th.addEventListener('dragstart', (e) => {
+        th.classList.add('dragging');
+        e.dataTransfer.setData('text/plain', th.dataset.column);
+    });
+
+    th.addEventListener('dragover', (e) => {
+        e.preventDefault();
+    });
+
+    th.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const draggedColumn = e.dataTransfer.getData('text/plain');
+        const dropColumn = th.dataset.column;
+        
+        if (draggedColumn !== dropColumn) {
+            reorderColumns(draggedColumn, dropColumn);
+        }
+    });
+
+    th.addEventListener('dragend', () => {
+        th.classList.remove('dragging');
+    });
+}
+
+function reorderColumns(draggedColumn, dropColumn) {
+    const currentOrder = [...appState.columnOrder];
+    const draggedIndex = currentOrder.indexOf(draggedColumn);
+    const dropIndex = currentOrder.indexOf(dropColumn);
+
+    if (draggedIndex !== -1 && dropIndex !== -1) {
+        currentOrder.splice(draggedIndex, 1);
+        currentOrder.splice(dropIndex, 0, draggedColumn);
+        appState.columnOrder = currentOrder;
+        
+        // Rebuild table header
+        rebuildTableHeader();
+        renderTable();
+    }
+}
+
+function rebuildTableHeader() {
+    const header = document.getElementById('tableHeader');
+    if (!header) return;
+
+    const columnConfig = {
+        abreviatura: { title: 'Abreviatura', sortable: true, resizable: true },
+        entidad: { title: 'Entidad', sortable: true, resizable: true },
+        obligacion: { title: 'Obligación', sortable: true, resizable: true },
+        fechaLimite: { title: 'Fecha Límite', sortable: true, resizable: true },
+        estado: { title: 'Estado', sortable: true, resizable: true }
+    };
+
+    header.innerHTML = '';
+
+    appState.columnOrder.forEach(columnKey => {
+        const config = columnConfig[columnKey];
+        if (!config) return;
+
+        const th = document.createElement('th');
+        th.dataset.column = columnKey;
+        th.className = 'resizable sortable';
+        
+        if (appState.columnWidths[columnKey]) {
+            th.style.width = appState.columnWidths[columnKey];
+        }
+
+        th.innerHTML = `
+            <div class="th-content">
+                <span>${config.title}</span>
+                <span class="sort-icon">↕️</span>
+                <div class="resize-handle"></div>
+            </div>
+        `;
+
+        header.appendChild(th);
+    });
+
+    // Add actions column
+    const actionsth = document.createElement('th');
+    actionsth.dataset.column = 'acciones';
+    actionsth.innerHTML = '<div class="th-content"><span>Acciones</span></div>';
+    header.appendChild(actionsth);
+
+    setupTableHeader();
+}
+
+function renderTable(dataOverride = null) {
     const tbody = document.getElementById('tableBody');
     if (!tbody) return;
     
+    let dataToRender = dataOverride || appState.filteredData;
+
+    // Apply sorting
+    if (appState.sortConfig.column && appState.sortConfig.direction) {
+        dataToRender = [...dataToRender].sort((a, b) => {
+            const aVal = a[appState.sortConfig.column] || '';
+            const bVal = b[appState.sortConfig.column] || '';
+            
+            let result = 0;
+            if (appState.sortConfig.column === 'fechaLimite') {
+                result = new Date(aVal) - new Date(bVal);
+            } else {
+                result = aVal.toString().localeCompare(bVal.toString());
+            }
+            
+            return appState.sortConfig.direction === 'asc' ? result : -result;
+        });
+    }
+    
     tbody.innerHTML = '';
 
-    appState.filteredData.forEach(item => {
-        const statusClass = getStatusClassForRow(item);
-        const isSelected = appState.selectedRows.has(item.rowIndex);
-        
+    dataToRender.forEach(item => {
         const row = document.createElement('tr');
-        row.className = statusClass;
-        if (isSelected) row.classList.add('selected');
         
-        row.innerHTML = `
-            <td>
-                <input type="checkbox" class="row-checkbox" data-row-index="${item.rowIndex}" ${isSelected ? 'checked' : ''}>
-            </td>
-            <td>${item.empresa}</td>
-            <td>${item.abreviatura}</td>
-            <td>${item.responsable}</td>
-            <td>${item.entidad}</td>
-            <td>${item.obligacion}</td>
-            <td>${item.periodoCompleto}</td>
-            <td>${formatDate(item.fechaLimite)}</td>
-            <td class="status-cell">
-                <span class="status status--${getStatusClass(item.estado)}">${item.estado}</span>
-            </td>
+        const cells = [];
+        appState.columnOrder.forEach(columnKey => {
+            let cellContent = '';
+            
+            switch (columnKey) {
+                case 'abreviatura':
+                    cellContent = item.abreviatura;
+                    break;
+                case 'entidad':
+                    cellContent = item.entidad;
+                    break;
+                case 'obligacion':
+                    cellContent = item.obligacion;
+                    break;
+                case 'fechaLimite':
+                    cellContent = formatDate(item.fechaLimite);
+                    break;
+                case 'estado':
+                    cellContent = `<span class="status status--${item.estado}">${getStatusLabel(item.estado)}</span>`;
+                    break;
+            }
+            
+            cells.push(`<td>${cellContent}</td>`);
+        });
+
+        // Add actions column
+        cells.push(`
             <td class="table-actions">
                 <button class="btn btn--sm btn--outline btn-icon" onclick="editRecord(${item.rowIndex})" title="Editar">
                     ✏️
                 </button>
             </td>
-        `;
-        
-        // Add event listener for row checkbox
-        const checkbox = row.querySelector('.row-checkbox');
-        checkbox.addEventListener('change', (e) => {
-            const rowIndex = parseInt(e.target.dataset.rowIndex);
-            if (e.target.checked) {
-                appState.selectedRows.add(rowIndex);
-                row.classList.add('selected');
-            } else {
-                appState.selectedRows.delete(rowIndex);
-                row.classList.remove('selected');
-            }
-            updateBulkActionsBar();
-            updateSelectAllCheckbox();
-        });
-        
+        `);
+
+        row.innerHTML = cells.join('');
         tbody.appendChild(row);
     });
-    
-    updateSelectAllCheckbox();
 }
 
-// Get status class for table rows
-function getStatusClassForRow(item) {
-    if (!item.fechaLimite) return '';
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const dueDate = new Date(item.fechaLimite);
-    dueDate.setHours(0, 0, 0, 0);
-    
-    const estado = item.estado.toLowerCase();
-    
-    if (estado === 'presentada') {
-        return 'status-presentada';
-    } else if (estado === 'no aplica') {
-        return 'status-no-aplica';
-    } else if (estado === 'pendiente') {
-        if (dueDate < today) {
-            return 'status-vencida';
-        } else {
-            return 'status-pendiente';
-        }
-    }
-    
-    return '';
+function getStatusLabel(status) {
+    const labels = {
+        'presentada': 'Presentada',
+        'pendiente': 'Pendiente',
+        'no_aplica': 'No Aplica',
+        'vencida': 'Vencida'
+    };
+    return labels[status] || status;
 }
 
-// Format date for display
-function formatDate(date) {
-    if (!date) return '';
-    try {
-        return date.toLocaleDateString('es-ES');
-    } catch {
-        return '';
-    }
-}
-
-// Get status CSS class
-function getStatusClass(status) {
-    switch (status?.toLowerCase()) {
-        case 'presentada': return 'success';
-        case 'no aplica': return 'info';
-        case 'pendiente': return 'warning';
-        default: return 'info';
-    }
-}
-
-// Setup bulk actions
-function setupBulkActions() {
-    const selectAllCb = document.getElementById('selectAllCheckbox');
-    const bulkStatusBtn = document.getElementById('bulkStatusBtn');
-    const clearSelectionBtn = document.getElementById('clearSelectionBtn');
-    
-    if (selectAllCb) {
-        selectAllCb.addEventListener('change', (e) => {
-            const isChecked = e.target.checked;
-            appState.selectedRows.clear();
-            
-            if (isChecked) {
-                appState.filteredData.forEach(item => {
-                    appState.selectedRows.add(item.rowIndex);
-                });
-            }
-            
-            document.querySelectorAll('.row-checkbox').forEach(cb => {
-                cb.checked = isChecked;
-            });
-            
-            document.querySelectorAll('#tableBody tr').forEach(row => {
-                if (isChecked) {
-                    row.classList.add('selected');
-                } else {
-                    row.classList.remove('selected');
-                }
-            });
-            
-            updateBulkActionsBar();
-        });
-    }
-    
-    if (bulkStatusBtn) {
-        bulkStatusBtn.addEventListener('click', showBulkStatusModal);
-    }
-    
-    if (clearSelectionBtn) {
-        clearSelectionBtn.addEventListener('click', clearSelection);
-    }
-    
-    setupBulkStatusModal();
-}
-
-// Update select all checkbox
-function updateSelectAllCheckbox() {
-    const selectAllCb = document.getElementById('selectAllCheckbox');
-    if (!selectAllCb) return;
-    
-    const totalVisible = appState.filteredData.length;
-    const selectedVisible = appState.filteredData.filter(item => 
-        appState.selectedRows.has(item.rowIndex)
-    ).length;
-    
-    selectAllCb.checked = totalVisible > 0 && selectedVisible === totalVisible;
-    selectAllCb.indeterminate = selectedVisible > 0 && selectedVisible < totalVisible;
-}
-
-// Update bulk actions bar - Fixed to show properly
-function updateBulkActionsBar() {
-    const bar = document.getElementById('bulkActionsBar');
-    const countSpan = document.getElementById('selectedCount');
-    
-    if (bar && countSpan) {
-        const selectedCount = appState.selectedRows.size;
-        
-        if (selectedCount > 0) {
-            bar.classList.remove('hidden');
-            countSpan.textContent = `${selectedCount} seleccionado${selectedCount !== 1 ? 's' : ''}`;
-            console.log('Bulk actions bar shown for', selectedCount, 'items');
-        } else {
-            bar.classList.add('hidden');
-        }
-    }
-}
-
-// Clear selection
-function clearSelection() {
-    appState.selectedRows.clear();
-    document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
-    document.querySelectorAll('#tableBody tr').forEach(row => row.classList.remove('selected'));
-    updateBulkActionsBar();
-    updateSelectAllCheckbox();
-}
-
-// Show bulk status modal
-function showBulkStatusModal() {
-    const modal = document.getElementById('bulkStatusModal');
-    const countSpan = document.getElementById('bulkItemCount');
-    
-    if (modal && countSpan) {
-        countSpan.textContent = appState.selectedRows.size;
-        modal.classList.remove('hidden');
-    }
-}
-
-// Setup bulk status modal
-function setupBulkStatusModal() {
-    const modal = document.getElementById('bulkStatusModal');
-    const closeBtn = document.getElementById('closeBulkModal');
-    const cancelBtn = document.getElementById('cancelBulkEdit');
-    const form = document.getElementById('bulkStatusForm');
-
-    if (closeBtn) closeBtn.addEventListener('click', closeBulkStatusModal);
-    if (cancelBtn) cancelBtn.addEventListener('click', closeBulkStatusModal);
-    
-    if (modal) {
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) closeBulkStatusModal();
-        });
-    }
-
-    if (form) form.addEventListener('submit', saveBulkStatusChange);
-}
-
-// Close bulk status modal
-function closeBulkStatusModal() {
-    const modal = document.getElementById('bulkStatusModal');
-    if (modal) modal.classList.add('hidden');
-}
-
-// Save bulk status change
-async function saveBulkStatusChange(e) {
-    e.preventDefault();
-    
-    const newStatus = document.getElementById('bulkEstado')?.value;
-    if (!newStatus || appState.selectedRows.size === 0) {
-        AlertManager.error('Selecciona un estado válido');
-        return;
-    }
-
-    try {
-        appState.setLoading(true);
-        
-        // Update local data
-        const updatedRows = [];
-        appState.selectedRows.forEach(rowIndex => {
-            const dataIndex = appState.data.findIndex(item => item.rowIndex === rowIndex);
-            if (dataIndex !== -1) {
-                appState.data[dataIndex].estado = newStatus;
-                updatedRows.push(rowIndex);
-            }
-        });
-        
-        // Update Google Sheets if connected
-        if (appState.isSignedIn && updatedRows.length > 0) {
-            await bulkUpdateGoogleSheets(updatedRows, newStatus);
-        }
-        
-        // Update filtered data
-        appState.filteredData.forEach(item => {
-            if (appState.selectedRows.has(item.rowIndex)) {
-                item.estado = newStatus;
-            }
-        });
-        
-        renderTable();
-        updateCalendar();
-        updateStats();
-        closeBulkStatusModal();
-        clearSelection();
-        
-        AlertManager.success(`Estado actualizado para ${updatedRows.length} registro${updatedRows.length !== 1 ? 's' : ''}`);
-
-    } catch (error) {
-        console.error('Error in bulk update:', error);
-        AlertManager.error('Error al actualizar estados: ' + error.message);
-    } finally {
-        appState.setLoading(false);
-    }
-}
-
-// Bulk update Google Sheets
-async function bulkUpdateGoogleSheets(rowIndexes, newStatus) {
-    try {
-        const requests = rowIndexes.map(rowIndex => ({
-            range: `DATA!I${rowIndex}:I${rowIndex}`,
-            values: [[newStatus]]
-        }));
-        
-        await gapi.client.sheets.spreadsheets.values.batchUpdate({
-            spreadsheetId: CONFIG.SPREADSHEET_ID,
-            resource: {
-                valueInputOption: 'USER_ENTERED',
-                data: requests
-            }
-        });
-        
-        console.log('Successfully updated Google Sheets in bulk');
-    } catch (error) {
-        console.error('Error updating Google Sheets in bulk:', error);
-        AlertManager.warning('Cambios guardados localmente. Error al sincronizar con Google Sheets.');
-        throw error;
-    }
-}
-
-// Setup calendar with enhanced color rules and event titles
+// Calendar Setup
 function setupCalendar() {
     const calendarEl = document.getElementById('calendar');
     if (!calendarEl || typeof FullCalendar === 'undefined') return;
@@ -1092,7 +1020,6 @@ function setupCalendar() {
     appState.calendar.render();
 }
 
-// Update calendar
 function updateCalendar() {
     if (appState.calendar) {
         appState.calendar.removeAllEvents();
@@ -1100,58 +1027,29 @@ function updateCalendar() {
     }
 }
 
-// Get calendar events with enhanced color rules and titles
 function getCalendarEvents() {
-    return appState.filteredData.filter(item => item.fechaLimite).map(item => {
-        const { color, className } = getEventColorAndClass(item);
-        
-        return {
-            title: `${item.abreviatura} – ${item.entidad}`,
-            date: item.fechaLimite.toISOString().split('T')[0],
-            color: color,
-            className: className,
-            extendedProps: {
-                rowIndex: item.rowIndex,
-                description: item.obligacion,
-                status: item.estado,
-                empresa: item.empresa
-            }
-        };
-    });
-}
-
-// Get event color and class based on enhanced status rules
-function getEventColorAndClass(item) {
-    if (!item.fechaLimite) {
-        return { color: '#6b7280', className: 'fc-event-no-aplica' };
-    }
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const dueDate = new Date(item.fechaLimite);
-    dueDate.setHours(0, 0, 0, 0);
-    
-    const estado = item.estado.toLowerCase();
-    
-    if (estado === 'presentada') {
-        return { color: '#22c55e', className: 'fc-event-presentada' };
-    } else if (estado === 'no aplica') {
-        return { color: '#6b7280', className: 'fc-event-no-aplica' };
-    } else if (estado === 'pendiente') {
-        if (dueDate < today) {
-            // Vencida: Pendiente y fecha límite < hoy
-            return { color: '#ef4444', className: 'fc-event-vencida' };
-        } else {
-            // Pendiente futuro
-            return { color: '#f59e0b', className: 'fc-event-pendiente' };
+    return appState.filteredData.map(item => ({
+        title: `${item.abreviatura} – ${item.entidad} – ${item.obligacion}`,
+        date: item.fechaLimite,
+        color: getEventColor(item.estado),
+        extendedProps: {
+            rowIndex: item.rowIndex,
+            estado: item.estado
         }
-    }
-    
-    // Default
-    return { color: '#f59e0b', className: 'fc-event-pendiente' };
+    }));
 }
 
-// Update stats
+function getEventColor(status) {
+    const colors = {
+        'presentada': '#22c55e',
+        'pendiente': '#f59e0b',
+        'no_aplica': '#6b7280',
+        'vencida': '#ef4444'
+    };
+    return colors[status] || '#6b7280';
+}
+
+// Stats Update
 function updateStats() {
     const totalEl = document.getElementById('totalCount');
     const upcomingEl = document.getElementById('upcomingCount');
@@ -1164,19 +1062,17 @@ function updateStats() {
     today.setHours(0, 0, 0, 0);
     
     const upcoming = appState.filteredData.filter(item => {
-        if (!item.fechaLimite) return false;
+        if (!item.fechaLimite || item.estado === 'presentada') return false;
         const dueDate = new Date(item.fechaLimite);
-        dueDate.setHours(0, 0, 0, 0);
         const diffTime = dueDate - today;
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        return diffDays >= 0 && diffDays <= 7 && item.estado.toLowerCase() !== 'presentada';
+        return diffDays >= 0 && diffDays <= 30;
     }).length;
     
     const overdue = appState.filteredData.filter(item => {
-        if (!item.fechaLimite) return false;
+        if (!item.fechaLimite || item.estado === 'presentada') return false;
         const dueDate = new Date(item.fechaLimite);
-        dueDate.setHours(0, 0, 0, 0);
-        return dueDate < today && item.estado.toLowerCase() === 'pendiente';
+        return dueDate < today;
     }).length;
 
     totalEl.textContent = total;
@@ -1184,9 +1080,9 @@ function updateStats() {
     overdueEl.textContent = overdue;
 }
 
-// Edit record
+// Edit Modal
 window.editRecord = function(rowIndex) {
-    const record = appState.data.find(item => item.rowIndex === rowIndex);
+    const record = appState.userFilteredData.find(item => item.rowIndex === rowIndex);
     if (!record) {
         AlertManager.error('Registro no encontrado');
         return;
@@ -1194,20 +1090,22 @@ window.editRecord = function(rowIndex) {
 
     appState.currentEditingRow = rowIndex;
     
-    // Populate modal
-    const fields = [
-        'editEmpresa', 'editAbreviatura', 'editResponsable', 'editEntidad', 
-        'editObligacion', 'editPeriodo', 'editAno', 'editFechaLimite', 'editEstado'
-    ];
-    const values = [
-        record.empresa, record.abreviatura, record.responsable, record.entidad,
-        record.obligacion, record.periodo, record.ano, 
-        record.fechaLimiteString, record.estado
-    ];
+    // Populate modal with read-only and editable fields
+    const fields = {
+        editEmpresa: record.empresa,
+        editAbreviatura: record.abreviatura,
+        editResponsable: record.responsable,
+        editEntidad: record.entidad,
+        editObligacion: record.obligacion,
+        editPeriodo: record.periodo,
+        editAno: record.ano,
+        editFechaLimite: record.fechaLimite,
+        editEstado: record.estado
+    };
     
-    fields.forEach((fieldId, index) => {
+    Object.keys(fields).forEach(fieldId => {
         const field = document.getElementById(fieldId);
-        if (field) field.value = values[index];
+        if (field) field.value = fields[fieldId];
     });
 
     // Show modal
@@ -1215,33 +1113,37 @@ window.editRecord = function(rowIndex) {
     if (modal) modal.classList.remove('hidden');
 };
 
-// Setup modal
-function setupModal() {
+// Modal Setup
+function setupModals() {
+    setupEditModal();
+    setupAlarmModal();
+    setupUserModal();
+}
+
+function setupEditModal() {
     const modal = document.getElementById('editModal');
     const closeBtn = document.getElementById('closeModal');
     const cancelBtn = document.getElementById('cancelEdit');
     const form = document.getElementById('editForm');
 
-    if (closeBtn) closeBtn.addEventListener('click', closeModal);
-    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeEditModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeEditModal);
     
     if (modal) {
         modal.addEventListener('click', (e) => {
-            if (e.target === modal) closeModal();
+            if (e.target === modal) closeEditModal();
         });
     }
 
     if (form) form.addEventListener('submit', saveRecord);
 }
 
-// Close modal
-function closeModal() {
+function closeEditModal() {
     const modal = document.getElementById('editModal');
     if (modal) modal.classList.add('hidden');
     appState.currentEditingRow = null;
 }
 
-// Save record
 async function saveRecord(e) {
     e.preventDefault();
     
@@ -1253,28 +1155,10 @@ async function saveRecord(e) {
     try {
         appState.setLoading(true);
 
-        const fechaLimiteString = document.getElementById('editFechaLimite')?.value || '';
-        const fechaLimite = parseDate(fechaLimiteString);
-        
-        if (!fechaLimite) {
-            AlertManager.error('La fecha límite no es válida');
-            return;
-        }
-
         const updatedData = {
-            empresa: document.getElementById('editEmpresa')?.value || '',
-            abreviatura: document.getElementById('editAbreviatura')?.value || '',
-            responsable: document.getElementById('editResponsable')?.value || '',
-            entidad: document.getElementById('editEntidad')?.value || '',
-            obligacion: document.getElementById('editObligacion')?.value || '',
-            periodo: document.getElementById('editPeriodo')?.value || '',
-            ano: document.getElementById('editAno')?.value || new Date().getFullYear().toString(),
-            fechaLimite: fechaLimite,
-            fechaLimiteString: fechaLimiteString,
-            estado: document.getElementById('editEstado')?.value || 'Pendiente'
+            fechaLimite: document.getElementById('editFechaLimite')?.value || '',
+            estado: document.getElementById('editEstado')?.value || 'pendiente'
         };
-        
-        updatedData.periodoCompleto = `${updatedData.periodo}-${updatedData.ano}`;
 
         // Update local data
         const recordIndex = appState.data.findIndex(item => item.rowIndex === appState.currentEditingRow);
@@ -1282,12 +1166,12 @@ async function saveRecord(e) {
             Object.assign(appState.data[recordIndex], updatedData);
         }
 
-        // Save to Google Sheets if connected
-        if (appState.isSignedIn) {
-            await safeGoogleSheetsUpdate(appState.currentEditingRow, updatedData);
+        // Update filtered data
+        const userFilteredIndex = appState.userFilteredData.findIndex(item => item.rowIndex === appState.currentEditingRow);
+        if (userFilteredIndex !== -1) {
+            Object.assign(appState.userFilteredData[userFilteredIndex], updatedData);
         }
 
-        // Update filtered data
         const filteredIndex = appState.filteredData.findIndex(item => item.rowIndex === appState.currentEditingRow);
         if (filteredIndex !== -1) {
             Object.assign(appState.filteredData[filteredIndex], updatedData);
@@ -1296,7 +1180,7 @@ async function saveRecord(e) {
         renderTable();
         updateCalendar();
         updateStats();
-        closeModal();
+        closeEditModal();
         
         AlertManager.success('Registro actualizado exitosamente');
 
@@ -1308,55 +1192,80 @@ async function saveRecord(e) {
     }
 }
 
-// Safe Google Sheets update
-async function safeGoogleSheetsUpdate(rowIndex, data) {
-    try {
-        const values = [
-            [data.empresa, data.abreviatura, data.responsable, data.entidad, 
-             data.obligacion, data.periodo, data.ano, data.fechaLimiteString, data.estado]
-        ];
-
-        await gapi.client.sheets.spreadsheets.values.update({
-            spreadsheetId: CONFIG.SPREADSHEET_ID,
-            range: `DATA!A${rowIndex}:I${rowIndex}`,
-            valueInputOption: 'USER_ENTERED',
-            resource: { values }
+// Simplified functions for modal setup (alarm and user modals)
+function setupAlarmModal() {
+    const alarmBtn = document.getElementById('alarmBtn');
+    if (alarmBtn) {
+        alarmBtn.addEventListener('click', () => {
+            AlertManager.info('Sistema de alarmas disponible para usuarios logueados');
         });
-        
-        console.log('Successfully updated Google Sheets');
-    } catch (error) {
-        console.error('Error updating Google Sheets:', error);
-        AlertManager.warning('Cambio guardado localmente. Error al sincronizar con Google Sheets.');
-        throw error;
     }
 }
 
-// Clear all data
-function clearAllData() {
-    appState.data = [];
-    appState.filteredData = [];
-    appState.selectedRows.clear();
-    
-    const tbody = document.getElementById('tableBody');
-    if (tbody) tbody.innerHTML = '';
-    
-    if (appState.calendar) {
-        appState.calendar.removeAllEvents();
+function setupUserModal() {
+    const userMgmtBtn = document.getElementById('userMgmtBtn');
+    if (userMgmtBtn) {
+        userMgmtBtn.addEventListener('click', () => {
+            AlertManager.info('Gestión de usuarios disponible para administradores');
+        });
     }
-    
-    updateStats();
-    updateBulkActionsBar();
+}
+
+// Header Actions
+function setupHeaderActions() {
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', () => {
+            AuthManager.logout();
+            AlertManager.info('Sesión cerrada');
+        });
+    }
+}
+
+// Utility Functions
+function formatDate(dateString) {
+    if (!dateString) return '';
+    try {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('es-ES');
+    } catch {
+        return dateString;
+    }
+}
+
+// Google APIs Initialization (simplified for demo)
+async function initializeGoogleAPIs() {
+    try {
+        console.log('Initializing Google APIs...');
+        appState.updateConnectionStatus('loading', 'Inicializando APIs de Google...');
+
+        // Simulate API initialization
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        appState.updateConnectionStatus('success', 'APIs de Google inicializadas (modo demo)');
+        AlertManager.info('Usando modo demostración. Los datos no se sincronizarán con Google Sheets.');
+
+    } catch (error) {
+        console.error('Error initializing Google APIs:', error);
+        appState.updateConnectionStatus('error', `Error al inicializar: ${error.message}`);
+        AlertManager.warning('Error al conectar con Google APIs. Usando modo demostración.');
+    }
 }
 
 // Initialize app when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded, initializing app...');
+    console.log('Initial users:', appState.users.length);
     
-    appState.setLoading(false);
-    setupModal();
-    loadDemoData();
+    // Setup components
+    setupLogin();
+    setupHeaderActions();
     
+    // Show login screen
+    showLoginScreen();
+    
+    // Initialize Google APIs in background
     setTimeout(() => {
         initializeGoogleAPIs();
-    }, 500);
+    }, 1000);
 });

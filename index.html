@@ -5,285 +5,226 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Calendario Fiscal - Obligaciones Tributarias</title>
     
-    <!-- FullCalendar CSS -->
+    <!-- FullCalendar CSS - Using unpkg to avoid MIME type issues -->
     <link href="https://unpkg.com/fullcalendar@6.1.10/index.global.min.css" rel="stylesheet">
     
     <!-- Custom CSS -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <!-- Login Screen -->
-    <div id="loginScreen" class="login-screen">
-        <div class="login-container">
-            <div class="card login-card">
-                <div class="card__body">
-                    <h2 class="text-center">Calendario Fiscal</h2>
-                    <p class="text-center" style="color: var(--color-text-secondary); margin-bottom: var(--space-24);">
-                        Ingresa tus credenciales para acceder
-                    </p>
+    <!-- Connection Status Banner -->
+    <div id="connectionStatus" class="connection-status hidden">
+        <div class="container">
+            <div class="status-content">
+                <span id="statusIcon" class="status-icon">⚠️</span>
+                <span id="statusText">Conectando a Google Sheets...</span>
+                <button id="retryBtn" class="btn btn--sm btn--outline hidden">Reintentar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Header -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <h1>Calendario Fiscal</h1>
+                <div class="header-actions">
+                    <div class="user-info hidden" id="userInfo">
+                        <span class="user-welcome">Hola, <span id="currentUser">Usuario</span></span>
+                    </div>
+                    <button id="authBtn" class="btn btn--primary">
+                        <span id="authText">Conectar a Google</span>
+                    </button>
+                    <button id="loginBtn" class="btn btn--outline hidden">Iniciar Sesión</button>
+                    <button id="signoutBtn" class="btn btn--outline hidden">Cerrar Sesión</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <p>Cargando datos fiscales...</p>
+        </div>
+    </div>
+
+    <!-- Login Modal -->
+    <div id="loginModal" class="modal hidden">
+        <div class="modal-overlay">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4>Iniciar Sesión</h4>
+                    <button id="closeLoginModal" class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div id="loginError" class="alert error hidden" style="margin-bottom: var(--space-16);">
+                        Usuario o contraseña incorrectos
+                    </div>
                     <form id="loginForm">
                         <div class="form-group">
                             <label class="form-label">Usuario</label>
-                            <select id="loginUser" class="form-control" required>
-                                <option value="">Seleccionar usuario...</option>
+                            <select id="userSelect" class="form-control" required>
+                                <option value="">Seleccione un usuario...</option>
                             </select>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Contraseña</label>
-                            <input type="password" id="loginPassword" class="form-control" required>
+                            <input type="password" id="passwordInput" class="form-control" required placeholder="Ingrese su contraseña">
                         </div>
-                        <button type="submit" class="btn btn--primary btn--full-width">
-                            Iniciar Sesión
-                        </button>
                     </form>
-                    <div id="loginError" class="login-error hidden">
-                        Usuario o contraseña incorrectos
+                    <div class="login-info">
+                        <p><small>Los usuarios se cargan automáticamente desde Google Sheets una vez conectado.</small></p>
                     </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" id="cancelLogin" class="btn btn--outline">Cancelar</button>
+                    <button type="submit" form="loginForm" id="submitLogin" class="btn btn--primary">Iniciar Sesión</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Main Application -->
-    <div id="mainApp" class="main-app hidden">
-        <!-- Connection Status Banner -->
-        <div id="connectionStatus" class="connection-status hidden">
-            <div class="container">
-                <div class="status-content">
-                    <span id="statusIcon" class="status-icon">⚠️</span>
-                    <span id="statusText">Conectando a Google Sheets...</span>
-                    <button id="retryBtn" class="btn btn--sm btn--outline hidden">Reintentar</button>
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="container">
+            <!-- Demo Mode Notice -->
+            <div id="demoNotice" class="demo-notice">
+                <div class="demo-content">
+                    <span class="demo-icon">🚀</span>
+                    <span class="demo-text">Modo demostración activo - Conecta a Google Sheets para datos reales</span>
                 </div>
             </div>
-        </div>
 
-        <!-- Main Header -->
-        <header class="header">
-            <div class="container">
-                <div class="header-content">
-                    <h1>Calendario Fiscal</h1>
-                    <div class="user-info">
-                        <span>Bienvenido, <strong id="currentUserName"></strong></span>
-                        <span class="user-role" id="currentUserRole"></span>
-                    </div>
-                    <div class="header-actions">
-                        <button id="alarmBtn" class="btn btn--outline">
-                            <span>🔔 Gestión de Alarmas</span>
-                        </button>
-                        <button id="userMgmtBtn" class="btn btn--outline hidden">
-                            <span>👥 Usuarios</span>
-                        </button>
-                        <button id="logoutBtn" class="btn btn--primary">Cerrar Sesión</button>
+            <!-- Filters Section -->
+            <section class="filters-section">
+                <div class="card">
+                    <div class="card__body">
+                        <h3>Filtros</h3>
+                        <div class="filters-grid">
+                            <div class="filter-group">
+                                <label class="form-label">Entidad</label>
+                                <div class="filter-container">
+                                    <input type="text" id="entitySearch" class="form-control filter-search" placeholder="Buscar entidad...">
+                                    <div id="entityFilters" class="filter-checkboxes"></div>
+                                </div>
+                            </div>
+                            <div class="filter-group">
+                                <label class="form-label">Tipo de Obligación</label>
+                                <div class="filter-container">
+                                    <input type="text" id="typeSearch" class="form-control filter-search" placeholder="Buscar tipo...">
+                                    <div id="typeFilters" class="filter-checkboxes"></div>
+                                </div>
+                            </div>
+                            <div class="filter-group">
+                                <label class="form-label">Estado</label>
+                                <div class="filter-container">
+                                    <div id="statusFilters" class="filter-checkboxes"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="filter-actions">
+                            <button id="clearFilters" class="btn btn--outline">Limpiar Filtros</button>
+                            <button id="applyFilters" class="btn btn--primary">Aplicar Filtros</button>
+                        </div>
                     </div>
                 </div>
-            </div>
-        </header>
+            </section>
 
-        <!-- Loading Overlay -->
-        <div id="loadingOverlay" class="loading-overlay hidden">
-            <div class="loading-content">
-                <div class="loading-spinner"></div>
-                <p>Cargando datos fiscales...</p>
-            </div>
+            <!-- Calendar Section -->
+            <section class="calendar-section">
+                <div class="card">
+                    <div class="card__body">
+                        <div class="calendar-header">
+                            <h3>Calendario de Vencimientos</h3>
+                            <div class="calendar-stats">
+                                <span class="stat">
+                                    <span class="stat-label">Total:</span>
+                                    <span id="totalCount" class="stat-value">0</span>
+                                </span>
+                                <span class="stat">
+                                    <span class="stat-label">Próximos:</span>
+                                    <span id="upcomingCount" class="stat-value">0</span>
+                                </span>
+                                <span class="stat">
+                                    <span class="stat-label">Vencidos:</span>
+                                    <span id="overdueCount" class="stat-value">0</span>
+                                </span>
+                            </div>
+                        </div>
+                        <div id="calendar"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Data Table Section -->
+            <section class="table-section">
+                <div class="card">
+                    <div class="card__body">
+                        <h3>Obligaciones Tributarias</h3>
+                        <div class="table-container">
+                            <table id="obligationsTable" class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Entidad</th>
+                                        <th>Tipo</th>
+                                        <th>Descripción</th>
+                                        <th>Fecha Vencimiento</th>
+                                        <th>Estado</th>
+                                        <th>Notas</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tableBody">
+                                    <!-- Data will be populated here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
         </div>
-
-        <!-- Main Content -->
-        <main class="main-content">
-            <div class="container">
-                <!-- Filters Section -->
-                <section class="filters-section">
-                    <div class="card">
-                        <div class="card__body">
-                            <h3>Filtros</h3>
-                            <div class="filters-grid">
-                                <div class="filter-group">
-                                    <label class="form-label">Entidad</label>
-                                    <div class="filter-container">
-                                        <input type="text" id="entitySearch" class="form-control filter-search" placeholder="Buscar entidad...">
-                                        <div id="entityFilters" class="filter-checkboxes"></div>
-                                    </div>
-                                </div>
-                                <div class="filter-group">
-                                    <label class="form-label">Obligación</label>
-                                    <div class="filter-container">
-                                        <input type="text" id="obligationSearch" class="form-control filter-search" placeholder="Buscar obligación...">
-                                        <div id="obligationFilters" class="filter-checkboxes"></div>
-                                    </div>
-                                </div>
-                                <div class="filter-group">
-                                    <label class="form-label">Estado</label>
-                                    <div class="filter-container">
-                                        <div id="statusFilters" class="filter-checkboxes"></div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="filter-actions">
-                                <button id="clearFilters" class="btn btn--outline">Limpiar Filtros</button>
-                                <button id="applyFilters" class="btn btn--primary">Aplicar Filtros</button>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Calendar Section -->
-                <section class="calendar-section">
-                    <div class="card">
-                        <div class="card__body">
-                            <div class="calendar-header">
-                                <h3>Calendario de Vencimientos</h3>
-                                <div class="calendar-stats">
-                                    <div class="stat-card cursor-pointer" data-filter="all">
-                                        <span class="stat-label">Total:</span>
-                                        <span id="totalCount" class="stat-value">0</span>
-                                    </div>
-                                    <div class="stat-card cursor-pointer" data-filter="proximos">
-                                        <span class="stat-label">Próximos:</span>
-                                        <span id="upcomingCount" class="stat-value">0</span>
-                                    </div>
-                                    <div class="stat-card cursor-pointer" data-filter="vencidos">
-                                        <span class="stat-label">Vencidos:</span>
-                                        <span id="overdueCount" class="stat-value">0</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div id="calendar"></div>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Data Table Section -->
-                <section class="table-section">
-                    <div class="card">
-                        <div class="card__body">
-                            <div class="table-header">
-                                <h3>Obligaciones Tributarias</h3>
-                                <div class="table-filters">
-                                    <div class="date-filter">
-                                        <label>Año:</label>
-                                        <input type="range" id="yearFilter" min="2020" max="2030" value="2025" class="range-slider">
-                                        <span id="yearValue">2025</span>
-                                    </div>
-                                    <div class="date-filter">
-                                        <label>Mes:</label>
-                                        <input type="range" id="monthFilter" min="1" max="12" value="1" class="range-slider">
-                                        <span id="monthValue">Enero</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="table-container enhanced-table">
-                                <table id="obligationsTable" class="data-table">
-                                    <thead>
-                                        <tr id="tableHeader">
-                                            <th data-column="abreviatura" class="resizable sortable">
-                                                <div class="th-content">
-                                                    <span>Abreviatura</span>
-                                                    <span class="sort-icon">↕️</span>
-                                                    <div class="resize-handle"></div>
-                                                </div>
-                                            </th>
-                                            <th data-column="entidad" class="resizable sortable">
-                                                <div class="th-content">
-                                                    <span>Entidad</span>
-                                                    <span class="sort-icon">↕️</span>
-                                                    <div class="resize-handle"></div>
-                                                </div>
-                                            </th>
-                                            <th data-column="obligacion" class="resizable sortable">
-                                                <div class="th-content">
-                                                    <span>Obligación</span>
-                                                    <span class="sort-icon">↕️</span>
-                                                    <div class="resize-handle"></div>
-                                                </div>
-                                            </th>
-                                            <th data-column="fechaLimite" class="resizable sortable">
-                                                <div class="th-content">
-                                                    <span>Fecha Límite</span>
-                                                    <span class="sort-icon">↕️</span>
-                                                    <div class="resize-handle"></div>
-                                                </div>
-                                            </th>
-                                            <th data-column="estado" class="resizable sortable">
-                                                <div class="th-content">
-                                                    <span>Estado</span>
-                                                    <span class="sort-icon">↕️</span>
-                                                    <div class="resize-handle"></div>
-                                                </div>
-                                            </th>
-                                            <th data-column="acciones">
-                                                <div class="th-content">
-                                                    <span>Acciones</span>
-                                                </div>
-                                            </th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="tableBody">
-                                        <!-- Data will be populated here -->
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-            </div>
-        </main>
-    </div>
+    </main>
 
     <!-- Edit Modal -->
     <div id="editModal" class="modal hidden">
         <div class="modal-overlay">
-            <div class="modal-content modal-large">
+            <div class="modal-content">
                 <div class="modal-header">
                     <h4>Editar Obligación</h4>
                     <button id="closeModal" class="modal-close">&times;</button>
                 </div>
                 <div class="modal-body">
                     <form id="editForm">
-                        <div class="form-grid">
-                            <div class="form-column">
-                                <div class="form-group">
-                                    <label class="form-label">Empresa</label>
-                                    <input type="text" id="editEmpresa" class="form-control" readonly>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Abreviatura</label>
-                                    <input type="text" id="editAbreviatura" class="form-control" readonly>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Responsable</label>
-                                    <input type="text" id="editResponsable" class="form-control" readonly>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Entidad</label>
-                                    <input type="text" id="editEntidad" class="form-control" readonly>
-                                </div>
-                            </div>
-                            <div class="form-column">
-                                <div class="form-group">
-                                    <label class="form-label">Obligación</label>
-                                    <input type="text" id="editObligacion" class="form-control" readonly>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Período</label>
-                                    <input type="text" id="editPeriodo" class="form-control" readonly>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Año</label>
-                                    <input type="text" id="editAno" class="form-control" readonly>
-                                </div>
-                                <div class="form-group editable-field">
-                                    <label class="form-label">Fecha Límite</label>
-                                    <input type="date" id="editFechaLimite" class="form-control" required>
-                                </div>
-                                <div class="form-group editable-field">
-                                    <label class="form-label">Estado</label>
-                                    <select id="editEstado" class="form-control" required>
-                                        <option value="presentada">Presentada</option>
-                                        <option value="pendiente">Pendiente</option>
-                                        <option value="no_aplica">No Aplica</option>
-                                        <option value="vencida">Vencida</option>
-                                    </select>
-                                </div>
-                            </div>
+                        <div class="form-group">
+                            <label class="form-label">Entidad</label>
+                            <input type="text" id="editEntity" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Tipo</label>
+                            <input type="text" id="editType" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Descripción</label>
+                            <textarea id="editDescription" class="form-control" rows="3" required></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Fecha de Vencimiento</label>
+                            <input type="date" id="editDueDate" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Estado</label>
+                            <select id="editStatus" class="form-control" required>
+                                <option value="Pendiente">Pendiente</option>
+                                <option value="Completado">Completado</option>
+                                <option value="Vencido">Vencido</option>
+                                <option value="En Proceso">En Proceso</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Notas</label>
+                            <textarea id="editNotes" class="form-control" rows="2"></textarea>
                         </div>
                     </form>
                 </div>
@@ -295,103 +236,10 @@
         </div>
     </div>
 
-    <!-- Alarm Management Modal -->
-    <div id="alarmModal" class="modal hidden">
-        <div class="modal-overlay">
-            <div class="modal-content modal-large">
-                <div class="modal-header">
-                    <h4>Gestión de Alarmas</h4>
-                    <button id="closeAlarmModal" class="modal-close">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="tabs">
-                        <button class="tab-button active" data-tab="configure">Configurar</button>
-                        <button class="tab-button" data-tab="pending" id="pendingTab">
-                            Pendientes <span class="badge" id="pendingBadge">0</span>
-                        </button>
-                    </div>
-
-                    <div id="configureTab" class="tab-content active">
-                        <form id="alarmForm">
-                            <div class="form-grid">
-                                <div class="form-column">
-                                    <div class="form-group">
-                                        <label class="form-label">Entidad</label>
-                                        <select id="alarmEntidad" class="form-control" required>
-                                            <option value="">Seleccionar entidad...</option>
-                                        </select>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">Obligación</label>
-                                        <select id="alarmObligacion" class="form-control" required>
-                                            <option value="">Seleccionar obligación...</option>
-                                        </select>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">Días de anticipación</label>
-                                        <input type="number" id="alarmDias" class="form-control" value="8" min="1" max="365" required>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">Periodicidad (días)</label>
-                                        <input type="number" id="alarmPeriodicidad" class="form-control" value="2" min="1" max="30" required>
-                                    </div>
-                                </div>
-                                <div class="form-column">
-                                    <div class="form-group">
-                                        <label class="form-label">Correos destinatarios</label>
-                                        <div class="email-selector">
-                                            <select id="userEmails" class="form-control">
-                                                <option value="">Seleccionar usuario...</option>
-                                            </select>
-                                            <button type="button" id="addUserEmail" class="btn btn--sm btn--outline">Agregar</button>
-                                        </div>
-                                        <div class="email-manual">
-                                            <input type="email" id="manualEmail" class="form-control" placeholder="Correo manual...">
-                                            <button type="button" id="addManualEmail" class="btn btn--sm btn--outline">Agregar</button>
-                                        </div>
-                                        <div id="selectedEmails" class="selected-emails"></div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">Mensaje personalizado</label>
-                                        <textarea id="alarmMensaje" class="form-control" rows="4" placeholder="Recordatorio: La obligación [OBLIGACION] de la entidad [ENTIDAD] vence el [FECHA]. Por favor, tome las medidas necesarias.">Recordatorio: La obligación [OBLIGACION] de la entidad [ENTIDAD] vence el [FECHA]. Por favor, tome las medidas necesarias.</textarea>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="form-actions">
-                                <button type="submit" class="btn btn--primary">Solicitar Configuración</button>
-                            </div>
-                        </form>
-                    </div>
-
-                    <div id="pendingTab" class="tab-content">
-                        <div class="pending-alarms">
-                            <div id="pendingAlarmsList"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- User Management Modal -->
-    <div id="userModal" class="modal hidden">
-        <div class="modal-overlay">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h4>Gestión de Usuarios</h4>
-                    <button id="closeUserModal" class="modal-close">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="users-list" id="usersList"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- Alert Container -->
     <div id="alertContainer" class="alert-container"></div>
 
-    <!-- Scripts -->
+    <!-- Scripts - Load Google APIs first, then FullCalendar, then our app -->
     <script src="https://apis.google.com/js/api.js" async defer></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://unpkg.com/fullcalendar@6.1.10/index.global.min.js"></script>

@@ -1,135 +1,36 @@
-// Enhanced Tax Calendar Application with User Management and Alarms
-// Configuration
+// Google Sheets Tax Calendar Application - New Authentication Flow
+// Production Configuration
 const CONFIG = {
     API_KEY: 'AIzaSyBdlizVp_hOembaoFJYE_rKHCvFtn9asok',
     CLIENT_ID: '341125602004-36tl0jfhtd7ce21csjun41fel085res8.apps.googleusercontent.com',
     SPREADSHEET_ID: '10L6aSKz8oPtq4ZpXcO921vCIciHWlCRqo_w5pAHc3yo',
     DISCOVERY_DOC: 'https://sheets.googleapis.com/$discovery/rest?version=v4',
     SCOPES: 'https://www.googleapis.com/auth/spreadsheets',
-    DATA_RANGE: 'DATA!A:I',
-    USERS_RANGE: 'USUARIOS!A:E'
+    DATA_RANGE: 'Sheet1!A:J',
+    USERS_RANGE: 'USUARIOS!A:D' // Assuming columns: Usuario, Contraseña, Permisos, Nombre
 };
-
-// Demo Data - Initialize immediately
-const DEMO_USERS = [
-    {
-        user: 'admin',
-        password: 'admin123',
-        role: 'Administrador',
-        companies: 'ACME Corp;Tech Solutions;Global Trading',
-        email: 'admin@empresa.com'
-    },
-    {
-        user: 'juan.perez',
-        password: 'user123',
-        role: 'Responsable',
-        companies: 'ACME Corp;Tech Solutions',
-        email: 'juan.perez@empresa.com'
-    },
-    {
-        user: 'maria.garcia',
-        password: 'user456',
-        role: 'Responsable',
-        companies: 'Global Trading',
-        email: 'maria.garcia@empresa.com'
-    }
-];
-
-const DEMO_DATA = [
-    {
-        rowIndex: 2,
-        empresa: 'ACME Corp',
-        abreviatura: 'IGV-M',
-        responsable: 'Juan Pérez',
-        entidad: 'SUNAT',
-        obligacion: 'IGV Mensual',
-        periodo: 'Mensual',
-        ano: '2025',
-        fechaLimite: '2025-01-12',
-        estado: 'pendiente'
-    },
-    {
-        rowIndex: 3,
-        empresa: 'Tech Solutions',
-        abreviatura: 'RTA-C',
-        responsable: 'María García',
-        entidad: 'SUNAT',
-        obligacion: 'Renta a Cuenta',
-        periodo: 'Mensual',
-        ano: '2025',
-        fechaLimite: '2025-01-12',
-        estado: 'presentada'
-    },
-    {
-        rowIndex: 4,
-        empresa: 'Global Trading',
-        abreviatura: 'ESS-C',
-        responsable: 'Carlos López',
-        entidad: 'ESSALUD',
-        obligacion: 'Contribuciones Sociales',
-        periodo: 'Mensual',
-        ano: '2025',
-        fechaLimite: '2025-01-15',
-        estado: 'pendiente'
-    },
-    {
-        rowIndex: 5,
-        empresa: 'ACME Corp',
-        abreviatura: 'PDT-621',
-        responsable: 'Juan Pérez',
-        entidad: 'SUNAT',
-        obligacion: 'PDT 621 IGV-Renta',
-        periodo: 'Mensual',
-        ano: '2025',
-        fechaLimite: '2025-01-17',
-        estado: 'vencida'
-    },
-    {
-        rowIndex: 6,
-        empresa: 'Tech Solutions',
-        abreviatura: 'LIC-M',
-        responsable: 'María García',
-        entidad: 'Municipalidad de Lima',
-        obligacion: 'Licencia Municipal',
-        periodo: 'Anual',
-        ano: '2025',
-        fechaLimite: '2025-02-28',
-        estado: 'no_aplica'
-    },
-    {
-        rowIndex: 7,
-        empresa: 'Global Trading',
-        abreviatura: 'CTS-S',
-        responsable: 'Carlos López',
-        entidad: 'SUNAT',
-        obligacion: 'CTS Semestral',
-        periodo: 'Semestral',
-        ano: '2025',
-        fechaLimite: '2025-02-15',
-        estado: 'pendiente'
-    }
-];
 
 // Global State Management
 class AppState {
     constructor() {
         this.isSignedIn = false;
-        this.currentUser = null;
-        this.users = [...DEMO_USERS]; // Initialize immediately
+        this.gsiInited = false;
+        this.gapiInited = false;
+        this.isLoading = false;
         this.data = [];
         this.filteredData = [];
-        this.userFilteredData = [];
+        this.users = [];
+        this.currentUser = null;
+        this.filters = {
+            entities: new Set(),
+            types: new Set(),
+            statuses: new Set()
+        };
         this.calendar = null;
         this.currentEditingRow = null;
-        this.columnOrder = ['abreviatura', 'entidad', 'obligacion', 'fechaLimite', 'estado'];
-        this.columnWidths = {};
-        this.sortConfig = { column: null, direction: null };
-        this.quickFilter = null;
-        this.selectedEmails = new Set();
-        this.pendingAlarms = [];
-        this.isLoading = false;
         this.initializationAttempts = 0;
         this.maxInitAttempts = 3;
+        this.connectionAttempted = false;
     }
 
     setLoading(loading) {
@@ -171,10 +72,79 @@ class AppState {
             text.textContent = message;
         }
     }
+
+    setDemoMode(isDemoMode) {
+        const demoNotice = document.getElementById('demoNotice');
+        if (demoNotice) {
+            if (isDemoMode) {
+                demoNotice.classList.remove('hidden');
+            } else {
+                demoNotice.classList.add('hidden');
+            }
+        }
+    }
+
+    setCurrentUser(user) {
+        this.currentUser = user;
+        const userInfo = document.getElementById('userInfo');
+        const currentUserSpan = document.getElementById('currentUser');
+        
+        if (userInfo && currentUserSpan) {
+            if (user) {
+                currentUserSpan.textContent = user.nombre || user.usuario;
+                userInfo.classList.remove('hidden');
+            } else {
+                userInfo.classList.add('hidden');
+            }
+        }
+    }
 }
 
 // Global state instance
 const appState = new AppState();
+
+// Local Storage Management
+class StorageManager {
+    static keys = {
+        AUTH_TOKEN: 'fiscal_auth_token',
+        USER_DATA: 'fiscal_user_data',
+        AUTO_CONNECT: 'fiscal_auto_connect'
+    };
+
+    static set(key, value) {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch (error) {
+            console.warn('LocalStorage not available:', error);
+        }
+    }
+
+    static get(key) {
+        try {
+            const value = localStorage.getItem(key);
+            return value ? JSON.parse(value) : null;
+        } catch (error) {
+            console.warn('LocalStorage read error:', error);
+            return null;
+        }
+    }
+
+    static remove(key) {
+        try {
+            localStorage.removeItem(key);
+        } catch (error) {
+            console.warn('LocalStorage remove error:', error);
+        }
+    }
+
+    static clear() {
+        try {
+            Object.values(this.keys).forEach(key => this.remove(key));
+        } catch (error) {
+            console.warn('LocalStorage clear error:', error);
+        }
+    }
+}
 
 // Alert System
 class AlertManager {
@@ -210,200 +180,237 @@ class AlertManager {
         }
     }
 
-    static success(message) { this.show(message, 'success'); }
-    static error(message) { this.show(message, 'error', 8000); }
-    static warning(message) { this.show(message, 'warning'); }
-    static info(message) { this.show(message, 'info'); }
+    static success(message) {
+        this.show(message, 'success');
+    }
+
+    static error(message) {
+        this.show(message, 'error', 8000);
+    }
+
+    static warning(message) {
+        this.show(message, 'warning');
+    }
+
+    static info(message) {
+        this.show(message, 'info');
+    }
 }
 
-// Authentication System
-class AuthManager {
-    static async authenticate(username, password) {
-        try {
-            const user = appState.users.find(u => 
-                u.user === username && u.password === password
-            );
+// Google APIs Initialization
+async function initializeGoogleAPIs() {
+    try {
+        console.log('Initializing Google APIs... Attempt:', appState.initializationAttempts + 1);
+        appState.initializationAttempts++;
+        appState.updateConnectionStatus('loading', 'Conectando a Google Sheets...');
 
-            if (!user) {
-                throw new Error('Credenciales incorrectas');
+        // Check if we've exceeded max attempts
+        if (appState.initializationAttempts > appState.maxInitAttempts) {
+            throw new Error('Se agotaron los intentos de conexión automática');
+        }
+
+        // Wait for gapi to be available with timeout
+        let gapiReady = false;
+        let attempts = 0;
+        const maxAttempts = 50; // 5 seconds total
+
+        while (!gapiReady && attempts < maxAttempts) {
+            if (typeof gapi !== 'undefined') {
+                gapiReady = true;
+                break;
             }
-
-            appState.currentUser = {
-                ...user,
-                companies: user.companies.split(';').map(c => c.trim())
-            };
-
-            return appState.currentUser;
-        } catch (error) {
-            console.error('Authentication error:', error);
-            throw error;
+            await new Promise(resolve => setTimeout(resolve, 100));
+            attempts++;
         }
-    }
 
-    static logout() {
-        appState.currentUser = null;
-        showLoginScreen();
-    }
-
-    static hasPermission(permission) {
-        if (!appState.currentUser) return false;
-        if (appState.currentUser.role === 'Administrador') return true;
-        
-        switch (permission) {
-            case 'manage_users':
-            case 'approve_alarms':
-                return false;
-            case 'manage_own_profile':
-            case 'request_alarms':
-                return true;
-            default:
-                return false;
+        if (!gapiReady) {
+            throw new Error('Google API library no disponible');
         }
+
+        // Initialize gapi with timeout
+        await Promise.race([
+            new Promise((resolve, reject) => {
+                gapi.load('client', {
+                    callback: resolve,
+                    onerror: () => reject(new Error('Error cargando cliente GAPI'))
+                });
+            }),
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Timeout cargando GAPI')), 10000)
+            )
+        ]);
+
+        await Promise.race([
+            gapi.client.init({
+                apiKey: CONFIG.API_KEY,
+                discoveryDocs: [CONFIG.DISCOVERY_DOC],
+            }),
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Timeout inicializando cliente GAPI')), 10000)
+            )
+        ]);
+
+        appState.gapiInited = true;
+        console.log('GAPI initialized successfully');
+
+        // Initialize Google Sign-In
+        let googleAccountsReady = false;
+        attempts = 0;
+
+        while (!googleAccountsReady && attempts < maxAttempts) {
+            if (typeof google !== 'undefined' && google.accounts) {
+                googleAccountsReady = true;
+                break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+            attempts++;
+        }
+
+        if (googleAccountsReady) {
+            try {
+                google.accounts.id.initialize({
+                    client_id: CONFIG.CLIENT_ID,
+                    callback: handleCredentialResponse,
+                });
+                appState.gsiInited = true;
+                console.log('GSI initialized successfully');
+            } catch (gsiError) {
+                console.warn('GSI initialization failed, but continuing:', gsiError);
+                appState.gsiInited = false;
+            }
+        } else {
+            console.warn('Google Sign-In library not available, but continuing');
+            appState.gsiInited = false;
+        }
+
+        // Try to auto-connect if we have stored auth preference
+        const autoConnect = StorageManager.get(StorageManager.keys.AUTO_CONNECT);
+        if (autoConnect) {
+            console.log('Auto-connecting based on stored preference...');
+            await handleAuthClick();
+        } else {
+            appState.updateConnectionStatus('info', 'Google APIs listas - Haz clic en "Conectar a Google"');
+            setupAuthButton();
+        }
+
+    } catch (error) {
+        console.error('Error initializing Google APIs:', error);
+        appState.updateConnectionStatus('error', `Error: ${error.message}`);
+        AlertManager.warning(`Conexión automática falló: ${error.message}. Usa el botón "Conectar a Google".`);
+        setupAuthButton();
+    } finally {
+        appState.connectionAttempted = true;
     }
 }
 
-// Login System - Fixed and Simplified
-function setupLogin() {
-    console.log('Setting up login with', appState.users.length, 'users');
-    
-    const loginForm = document.getElementById('loginForm');
-    const loginUser = document.getElementById('loginUser');
-    const errorDiv = document.getElementById('loginError');
+// Handle credential response
+function handleCredentialResponse(response) {
+    console.log('Credential response received');
+    // For this implementation, we'll use the simpler OAuth flow
+    handleAuthClick();
+}
 
-    if (!loginUser) {
-        console.error('Login user select not found');
+// Setup auth button
+function setupAuthButton() {
+    const authBtn = document.getElementById('authBtn');
+    const loginBtn = document.getElementById('loginBtn');
+    const signoutBtn = document.getElementById('signoutBtn');
+    const retryBtn = document.getElementById('retryBtn');
+
+    if (authBtn) {
+        authBtn.addEventListener('click', handleAuthClick);
+    }
+    if (loginBtn) {
+        loginBtn.addEventListener('click', showLoginModal);
+    }
+    if (signoutBtn) {
+        signoutBtn.addEventListener('click', handleSignoutClick);
+    }
+    if (retryBtn) {
+        retryBtn.addEventListener('click', () => {
+            appState.updateConnectionStatus('loading', 'Reintentando conexión...');
+            appState.initializationAttempts = 0; // Reset attempts
+            initializeGoogleAPIs();
+        });
+    }
+
+    updateAuthUI();
+}
+
+// Handle authorization
+async function handleAuthClick() {
+    if (!appState.gapiInited) {
+        AlertManager.error('Las APIs de Google no están inicializadas');
         return;
     }
 
-    // Force populate dropdown immediately
-    populateUserDropdown();
+    try {
+        appState.setLoading(true);
+        appState.updateConnectionStatus('loading', 'Autenticando con Google...');
 
-    if (loginForm) {
-        loginForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const username = loginUser.value;
-            const password = document.getElementById('loginPassword').value;
+        // Check if google.accounts.oauth2 is available
+        if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+            throw new Error('OAuth library no disponible');
+        }
 
-            console.log('Login attempt:', username);
-
-            if (!username) {
-                showLoginError('Por favor seleccione un usuario');
-                return;
-            }
-
-            if (!password) {
-                showLoginError('Por favor ingrese la contraseña');
-                return;
-            }
-
-            try {
-                appState.setLoading(true);
-                hideLoginError();
-
-                const user = await AuthManager.authenticate(username, password);
-                
-                console.log('Login successful for:', user.user);
-                showMainApp();
-                await loadData();
-                
-                AlertManager.success(`Bienvenido, ${user.user}`);
-            } catch (error) {
-                showLoginError(error.message);
-            } finally {
+        // Create a token client
+        const tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: CONFIG.CLIENT_ID,
+            scope: CONFIG.SCOPES,
+            callback: async (response) => {
+                try {
+                    if (response.error) {
+                        throw new Error('Authorization failed: ' + response.error);
+                    }
+                    
+                    console.log('Authorization successful');
+                    appState.isSignedIn = true;
+                    
+                    // Store auth preference
+                    StorageManager.set(StorageManager.keys.AUTO_CONNECT, true);
+                    StorageManager.set(StorageManager.keys.AUTH_TOKEN, response.access_token);
+                    
+                    updateAuthUI();
+                    appState.updateConnectionStatus('success', 'Conectado a Google Sheets');
+                    appState.setDemoMode(false);
+                    
+                    // Load users first, then data
+                    await loadUsers();
+                    await loadSpreadsheetData();
+                    
+                    AlertManager.success('Conectado exitosamente. Usuarios cargados.');
+                    
+                } catch (callbackError) {
+                    console.error('Authorization callback error:', callbackError);
+                    AlertManager.error('Error en la autorización: ' + callbackError.message);
+                    appState.updateConnectionStatus('error', 'Error de autorización');
+                } finally {
+                    appState.setLoading(false);
+                }
+            },
+            error_callback: (error) => {
+                console.error('Authorization error:', error);
                 appState.setLoading(false);
+                appState.updateConnectionStatus('error', 'Error de autorización');
+                AlertManager.error('Error en la autorización. Continuando con modo demostración.');
             }
         });
+
+        tokenClient.requestAccessToken();
+
+    } catch (error) {
+        console.error('Auth error:', error);
+        appState.setLoading(false);
+        appState.updateConnectionStatus('error', 'Error de autenticación');
+        AlertManager.error('Error de autenticación: ' + error.message + '. Continuando con modo demostración.');
     }
 }
 
-function populateUserDropdown() {
-    const loginUser = document.getElementById('loginUser');
-    if (!loginUser) return;
-
-    console.log('Populating dropdown with users:', appState.users);
-
-    // Clear existing options
-    loginUser.innerHTML = '';
-    
-    // Add default option
-    const defaultOption = document.createElement('option');
-    defaultOption.value = '';
-    defaultOption.textContent = 'Seleccionar usuario...';
-    loginUser.appendChild(defaultOption);
-
-    // Add user options
-    appState.users.forEach(user => {
-        const option = document.createElement('option');
-        option.value = user.user;
-        option.textContent = `${user.user} (${user.role})`;
-        loginUser.appendChild(option);
-        console.log('Added user option:', option.textContent);
-    });
-
-    console.log('Dropdown populated with', loginUser.options.length, 'options');
-}
-
-function showLoginError(message) {
-    const errorDiv = document.getElementById('loginError');
-    if (errorDiv) {
-        errorDiv.textContent = message;
-        errorDiv.classList.remove('hidden');
-    }
-}
-
-function hideLoginError() {
-    const errorDiv = document.getElementById('loginError');
-    if (errorDiv) {
-        errorDiv.classList.add('hidden');
-    }
-}
-
-function showLoginScreen() {
-    const loginScreen = document.getElementById('loginScreen');
-    const mainApp = document.getElementById('mainApp');
-    
-    if (loginScreen) loginScreen.classList.remove('hidden');
-    if (mainApp) mainApp.classList.add('hidden');
-    
-    // Clear any existing data
-    appState.currentUser = null;
-    appState.data = [];
-    appState.filteredData = [];
-    appState.userFilteredData = [];
-    
-    // Ensure dropdown is populated
-    setTimeout(populateUserDropdown, 100);
-}
-
-function showMainApp() {
-    const loginScreen = document.getElementById('loginScreen');
-    const mainApp = document.getElementById('mainApp');
-    
-    if (loginScreen) loginScreen.classList.add('hidden');
-    if (mainApp) mainApp.classList.remove('hidden');
-    
-    // Update user info in header
-    const userName = document.getElementById('currentUserName');
-    const userRole = document.getElementById('currentUserRole');
-    const userMgmtBtn = document.getElementById('userMgmtBtn');
-
-    if (userName && appState.currentUser) {
-        userName.textContent = appState.currentUser.user;
-    }
-    if (userRole && appState.currentUser) {
-        userRole.textContent = appState.currentUser.role;
-    }
-    
-    // Show user management button only for admins
-    if (userMgmtBtn && AuthManager.hasPermission('manage_users')) {
-        userMgmtBtn.classList.remove('hidden');
-    }
-}
-
-// Data Loading
-async function loadUsersFromSheets() {
+// Load users from USUARIOS sheet
+async function loadUsers() {
     try {
+        console.log('Loading users from USUARIOS sheet...');
+        
         const response = await gapi.client.sheets.spreadsheets.values.get({
             spreadsheetId: CONFIG.SPREADSHEET_ID,
             range: CONFIG.USERS_RANGE,
@@ -411,128 +418,352 @@ async function loadUsersFromSheets() {
 
         const rows = response.result.values;
         if (!rows || rows.length === 0) {
-            throw new Error('No users found in spreadsheet');
+            throw new Error('No se encontraron usuarios en la hoja USUARIOS');
         }
 
+        // Process users (skip header row)
         appState.users = rows.slice(1).map(row => ({
-            user: row[0] || '',
-            password: row[1] || '',
-            role: row[2] || 'Responsable',
-            companies: row[3] || '',
-            email: row[4] || ''
-        }));
+            usuario: row[0] || '',
+            contraseña: row[1] || '',
+            permisos: row[2] || 'basico',
+            nombre: row[3] || row[0] || ''
+        })).filter(user => user.usuario); // Filter out empty users
 
-        console.log(`Loaded ${appState.users.length} users from sheets`);
+        console.log(`Loaded ${appState.users.length} users`);
+        
+        // Populate user select
+        populateUserSelect();
+        
+        // Show login modal if we have users
+        if (appState.users.length > 0) {
+            showLoginModal();
+        }
+
     } catch (error) {
-        console.warn('Failed to load users from sheets, using demo data:', error);
-        appState.users = [...DEMO_USERS];
+        console.error('Error loading users:', error);
+        AlertManager.warning('No se pudieron cargar los usuarios: ' + error.message + '. Continuando sin autenticación de usuario.');
+        
+        // Create demo user for testing
+        appState.users = [{
+            usuario: 'admin',
+            contraseña: 'admin123',
+            permisos: 'admin',
+            nombre: 'Administrador Demo'
+        }];
+        populateUserSelect();
+        showLoginModal();
     }
 }
 
-async function loadData() {
+// Populate user select dropdown
+function populateUserSelect() {
+    const userSelect = document.getElementById('userSelect');
+    if (!userSelect) return;
+    
+    // Clear existing options except first
+    userSelect.innerHTML = '<option value="">Seleccione un usuario...</option>';
+    
+    // Add user options
+    appState.users.forEach(user => {
+        const option = document.createElement('option');
+        option.value = user.usuario;
+        option.textContent = `${user.nombre} (${user.usuario})`;
+        userSelect.appendChild(option);
+    });
+}
+
+// Show login modal
+function showLoginModal() {
+    const modal = document.getElementById('loginModal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        // Clear any previous errors
+        const errorDiv = document.getElementById('loginError');
+        if (errorDiv) errorDiv.classList.add('hidden');
+        
+        // Clear form
+        const form = document.getElementById('loginForm');
+        if (form) form.reset();
+    }
+}
+
+// Handle user login
+function handleUserLogin(e) {
+    e.preventDefault();
+    
+    const selectedUser = document.getElementById('userSelect')?.value;
+    const password = document.getElementById('passwordInput')?.value;
+    const errorDiv = document.getElementById('loginError');
+    
+    if (!selectedUser || !password) {
+        if (errorDiv) {
+            errorDiv.textContent = 'Por favor seleccione un usuario e ingrese la contraseña';
+            errorDiv.classList.remove('hidden');
+        }
+        return;
+    }
+    
+    // Find user
+    const user = appState.users.find(u => u.usuario === selectedUser);
+    if (!user || user.contraseña !== password) {
+        if (errorDiv) {
+            errorDiv.textContent = 'Usuario o contraseña incorrectos';
+            errorDiv.classList.remove('hidden');
+        }
+        return;
+    }
+    
+    // Login successful
+    appState.setCurrentUser(user);
+    StorageManager.set(StorageManager.keys.USER_DATA, user);
+    
+    const modal = document.getElementById('loginModal');
+    if (modal) modal.classList.add('hidden');
+    
+    // Filter data based on user permissions
+    filterDataByUser();
+    
+    AlertManager.success(`¡Bienvenido, ${user.nombre}!`);
+}
+
+// Filter data based on user permissions
+function filterDataByUser() {
+    if (!appState.currentUser) {
+        appState.filteredData = [...appState.data];
+        return;
+    }
+    
+    // For now, all users see all data
+    // In future, you can implement permission-based filtering here
+    // For example:
+    // if (appState.currentUser.permisos === 'basico') {
+    //     appState.filteredData = appState.data.filter(item => item.responsible === appState.currentUser.usuario);
+    // } else {
+    //     appState.filteredData = [...appState.data];
+    // }
+    
+    appState.filteredData = [...appState.data];
+    
+    // Update interface
+    initializeInterface();
+}
+
+// Handle signout
+function handleSignoutClick() {
     try {
+        const token = gapi.client.getToken();
+        if (token !== null) {
+            google.accounts.oauth2.revoke(token.access_token);
+            gapi.client.setToken('');
+        }
+    } catch (error) {
+        console.warn('Error during signout:', error);
+    }
+    
+    appState.isSignedIn = false;
+    appState.data = [];
+    appState.filteredData = [];
+    appState.users = [];
+    appState.setCurrentUser(null);
+    
+    // Clear storage
+    StorageManager.clear();
+    
+    updateAuthUI();
+    clearAllData();
+    loadDemoData(); // Load demo data after signout
+    appState.setDemoMode(true);
+    appState.updateConnectionStatus('info', 'Desconectado de Google Sheets');
+    AlertManager.info('Sesión cerrada. Mostrando datos de demostración.');
+}
+
+// Update auth UI
+function updateAuthUI() {
+    const authBtn = document.getElementById('authBtn');
+    const authText = document.getElementById('authText');
+    const loginBtn = document.getElementById('loginBtn');
+    const signoutBtn = document.getElementById('signoutBtn');
+
+    if (authBtn && loginBtn && signoutBtn) {
+        if (appState.isSignedIn) {
+            authBtn.classList.add('hidden');
+            if (appState.currentUser) {
+                loginBtn.classList.add('hidden');
+                signoutBtn.classList.remove('hidden');
+            } else {
+                loginBtn.classList.remove('hidden');
+                signoutBtn.classList.add('hidden');
+            }
+        } else {
+            authBtn.classList.remove('hidden');
+            loginBtn.classList.add('hidden');
+            signoutBtn.classList.add('hidden');
+            if (authText) authText.textContent = 'Conectar a Google';
+        }
+    }
+}
+
+// Load spreadsheet data
+async function loadSpreadsheetData() {
+    try {
+        console.log('Loading spreadsheet data...');
         appState.setLoading(true);
 
-        if (appState.isSignedIn) {
-            await loadDataFromSheets();
-        } else {
-            loadDemoData();
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+            spreadsheetId: CONFIG.SPREADSHEET_ID,
+            range: CONFIG.DATA_RANGE,
+        });
+
+        const rows = response.result.values;
+        if (!rows || rows.length === 0) {
+            throw new Error('No se encontraron datos en la hoja de cálculo');
         }
 
-        // Filter data by user's companies
-        filterDataByUserCompanies();
-        initializeInterface();
+        // Process data (skip header row)
+        const headers = rows[0];
+        appState.data = rows.slice(1).map((row, index) => ({
+            rowIndex: index + 2, // +2 because we skip header and arrays are 0-indexed
+            entity: row[0] || '',
+            type: row[1] || '',
+            description: row[2] || '',
+            dueDate: row[3] || '',
+            status: row[4] || 'Pendiente',
+            notes: row[5] || '',
+            priority: row[6] || 'Media',
+            amount: row[7] || '',
+            responsible: row[8] || '',
+            completedDate: row[9] || ''
+        }));
+
+        console.log(`Loaded ${appState.data.length} records`);
+        
+        // Filter data based on current user if logged in
+        filterDataByUser();
+        
+        AlertManager.success(`${appState.data.length} obligaciones cargadas desde Google Sheets`);
 
     } catch (error) {
         console.error('Error loading data:', error);
-        AlertManager.error('Error al cargar datos: ' + error.message);
+        AlertManager.error('Error al cargar datos de Google Sheets: ' + error.message + '. Usando datos de demostración.');
+        
+        // Load demo data as fallback
         loadDemoData();
-        filterDataByUserCompanies();
-        initializeInterface();
     } finally {
         appState.setLoading(false);
     }
 }
 
-async function loadDataFromSheets() {
-    const response = await gapi.client.sheets.spreadsheets.values.get({
-        spreadsheetId: CONFIG.SPREADSHEET_ID,
-        range: CONFIG.DATA_RANGE,
-    });
-
-    const rows = response.result.values;
-    if (!rows || rows.length === 0) {
-        throw new Error('No data found in spreadsheet');
-    }
-
-    appState.data = rows.slice(1).map((row, index) => ({
-        rowIndex: index + 2,
-        empresa: row[0] || '',
-        abreviatura: row[1] || '',
-        responsable: row[2] || '',
-        entidad: row[3] || '',
-        obligacion: row[4] || '',
-        periodo: row[5] || '',
-        ano: row[6] || '',
-        fechaLimite: row[7] || '',
-        estado: row[8] || 'pendiente'
-    }));
-
-    AlertManager.success(`${appState.data.length} registros cargados desde Google Sheets`);
-}
-
+// Load demo data as fallback
 function loadDemoData() {
-    appState.data = [...DEMO_DATA];
-    console.log('Loaded demo data:', appState.data.length, 'records');
+    console.log('Loading demo data...');
+    
+    appState.data = [
+        {
+            rowIndex: 2,
+            entity: 'SUNAT',
+            type: 'IGV',
+            description: 'Declaración mensual de IGV',
+            dueDate: '2025-01-12',
+            status: 'Pendiente',
+            notes: 'Revisar facturas del mes anterior',
+            priority: 'Alta',
+            amount: '15000',
+            responsible: 'Contador',
+            completedDate: ''
+        },
+        {
+            rowIndex: 3,
+            entity: 'SUNAT',
+            type: 'Renta',
+            description: 'Pago a cuenta de Impuesto a la Renta',
+            dueDate: '2025-01-12',
+            status: 'En Proceso',
+            notes: 'En preparación',
+            priority: 'Alta',
+            amount: '8500',
+            responsible: 'Gerencia',
+            completedDate: ''
+        },
+        {
+            rowIndex: 4,
+            entity: 'ESSALUD',
+            type: 'Contribuciones',
+            description: 'Declaración y pago de contribuciones',
+            dueDate: '2025-01-15',
+            status: 'Pendiente',
+            notes: 'Incluir nuevos empleados',
+            priority: 'Alta',
+            amount: '3200',
+            responsible: 'RRHH',
+            completedDate: ''
+        },
+        {
+            rowIndex: 5,
+            entity: 'SUNAT',
+            type: 'PDT',
+            description: 'Presentación de PDT 621',
+            dueDate: '2025-01-17',
+            status: 'Completado',
+            notes: 'Presentado correctamente',
+            priority: 'Media',
+            amount: '2500',
+            responsible: 'Contador',
+            completedDate: '2025-01-16'
+        },
+        {
+            rowIndex: 6,
+            entity: 'Municipalidad',
+            type: 'Licencias',
+            description: 'Renovación de licencia municipal',
+            dueDate: '2025-01-20',
+            status: 'Vencido',
+            notes: 'Pendiente de documentos',
+            priority: 'Crítica',
+            amount: '850',
+            responsible: 'Legal',
+            completedDate: ''
+        }
+    ];
+
+    appState.filteredData = [...appState.data];
+    initializeInterface();
+    appState.setDemoMode(true);
+    
     if (!appState.isSignedIn) {
-        AlertManager.warning('Usando datos de demostración. Los datos reales requieren conexión a Google Sheets.');
+        AlertManager.info('Mostrando datos de demostración. Conéctate a Google Sheets para datos reales.');
     }
+    appState.setLoading(false);
 }
 
-function filterDataByUserCompanies() {
-    if (!appState.currentUser) return;
-
-    appState.userFilteredData = appState.data.filter(item => 
-        appState.currentUser.companies.includes(item.empresa)
-    );
-    
-    appState.filteredData = [...appState.userFilteredData];
-    
-    console.log(`Filtered to ${appState.filteredData.length} records for user companies:`, 
-                appState.currentUser.companies);
-}
-
-// Interface Initialization
+// Initialize interface components
 function initializeInterface() {
     setupFilters();
-    setupTable();
+    renderTable();
     setupCalendar();
-    setupModals();
     updateStats();
-    setupDateFilters();
 }
 
-// Enhanced Filters
+// Setup filters
 function setupFilters() {
     const entities = new Set();
-    const obligations = new Set();
+    const types = new Set();
     const statuses = new Set();
 
-    appState.userFilteredData.forEach(item => {
-        if (item.entidad) entities.add(item.entidad);
-        if (item.obligacion) obligations.add(item.obligacion);
-        if (item.estado) statuses.add(item.estado);
+    appState.data.forEach(item => {
+        if (item.entity) entities.add(item.entity);
+        if (item.type) types.add(item.type);
+        if (item.status) statuses.add(item.status);
     });
 
     createFilterCheckboxes('entityFilters', entities, 'entities');
-    createFilterCheckboxes('obligationFilters', obligations, 'obligations');
+    createFilterCheckboxes('typeFilters', types, 'types');
     createFilterCheckboxes('statusFilters', statuses, 'statuses');
 
     setupFilterSearch();
     setupFilterActions();
-    setupStatCardFilters();
 }
 
+// Create filter checkboxes
 function createFilterCheckboxes(containerId, items, filterType) {
     const container = document.getElementById(containerId);
     if (!container) return;
@@ -554,18 +785,20 @@ function createFilterCheckboxes(containerId, items, filterType) {
     });
 }
 
+// Setup filter search
 function setupFilterSearch() {
     const entitySearch = document.getElementById('entitySearch');
-    const obligationSearch = document.getElementById('obligationSearch');
+    const typeSearch = document.getElementById('typeSearch');
 
     if (entitySearch) {
         entitySearch.addEventListener('input', (e) => filterCheckboxes('entityFilters', e.target.value));
     }
-    if (obligationSearch) {
-        obligationSearch.addEventListener('input', (e) => filterCheckboxes('obligationFilters', e.target.value));
+    if (typeSearch) {
+        typeSearch.addEventListener('input', (e) => filterCheckboxes('typeFilters', e.target.value));
     }
 }
 
+// Filter checkboxes based on search
 function filterCheckboxes(containerId, searchTerm) {
     const container = document.getElementById(containerId);
     if (!container) return;
@@ -579,48 +812,26 @@ function filterCheckboxes(containerId, searchTerm) {
     });
 }
 
+// Setup filter actions
 function setupFilterActions() {
     const clearBtn = document.getElementById('clearFilters');
     const applyBtn = document.getElementById('applyFilters');
 
-    if (clearBtn) clearBtn.addEventListener('click', clearFilters);
-    if (applyBtn) applyBtn.addEventListener('click', applyFilters);
+    if (clearBtn) {
+        clearBtn.addEventListener('click', clearFilters);
+    }
+    if (applyBtn) {
+        applyBtn.addEventListener('click', applyFilters);
+    }
 }
 
-function setupStatCardFilters() {
-    const statCards = document.querySelectorAll('.stat-card');
-    statCards.forEach(card => {
-        card.addEventListener('click', () => {
-            const filter = card.dataset.filter;
-            
-            // Remove active class from all cards
-            statCards.forEach(c => c.classList.remove('active'));
-            
-            if (appState.quickFilter === filter) {
-                // Deactivate current filter
-                appState.quickFilter = null;
-            } else {
-                // Activate new filter
-                appState.quickFilter = filter;
-                card.classList.add('active');
-            }
-            
-            applyFilters();
-        });
-    });
-}
-
+// Clear all filters
 function clearFilters() {
-    appState.quickFilter = null;
-    
     document.querySelectorAll('.filter-checkbox input[type="checkbox"]').forEach(checkbox => {
         checkbox.checked = true;
     });
     document.querySelectorAll('.filter-search').forEach(search => {
         search.value = '';
-    });
-    document.querySelectorAll('.stat-card').forEach(card => {
-        card.classList.remove('active');
     });
     
     // Reset filter visibility
@@ -631,51 +842,26 @@ function clearFilters() {
     applyFilters();
 }
 
+// Apply filters
 function applyFilters() {
     const selectedEntities = getSelectedFilters('entities');
-    const selectedObligations = getSelectedFilters('obligations');
+    const selectedTypes = getSelectedFilters('types');
     const selectedStatuses = getSelectedFilters('statuses');
 
-    let filtered = appState.userFilteredData.filter(item => {
-        return selectedEntities.has(item.entidad) &&
-               selectedObligations.has(item.obligacion) &&
-               selectedStatuses.has(item.estado);
+    appState.filteredData = appState.data.filter(item => {
+        return selectedEntities.has(item.entity) &&
+               selectedTypes.has(item.type) &&
+               selectedStatuses.has(item.status);
     });
 
-    // Apply quick filter from stat cards
-    if (appState.quickFilter) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        filtered = filtered.filter(item => {
-            switch (appState.quickFilter) {
-                case 'proximos':
-                    if (!item.fechaLimite || item.estado === 'presentada') return false;
-                    const dueDate = new Date(item.fechaLimite);
-                    const diffTime = dueDate - today;
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                    return diffDays >= 0 && diffDays <= 30;
-                    
-                case 'vencidos':
-                    if (!item.fechaLimite || item.estado === 'presentada') return false;
-                    const overDueDate = new Date(item.fechaLimite);
-                    return overDueDate < today;
-                    
-                case 'all':
-                default:
-                    return true;
-            }
-        });
-    }
-
-    appState.filteredData = filtered;
     renderTable();
     updateCalendar();
     updateStats();
     
-    AlertManager.info(`${appState.filteredData.length} registros mostrados`);
+    AlertManager.info(`${appState.filteredData.length} registros después del filtro`);
 }
 
+// Get selected filters
 function getSelectedFilters(filterType) {
     const selected = new Set();
     document.querySelectorAll(`input[id^="${filterType}_"]:checked`).forEach(checkbox => {
@@ -684,315 +870,56 @@ function getSelectedFilters(filterType) {
     return selected;
 }
 
-// Date Filters for Table
-function setupDateFilters() {
-    const yearFilter = document.getElementById('yearFilter');
-    const monthFilter = document.getElementById('monthFilter');
-    const yearValue = document.getElementById('yearValue');
-    const monthValue = document.getElementById('monthValue');
-
-    const monthNames = [
-        'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-        'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-    ];
-
-    if (yearFilter && monthFilter) {
-        yearFilter.addEventListener('input', () => {
-            if (yearValue) yearValue.textContent = yearFilter.value;
-            applyDateFilter();
-        });
-
-        monthFilter.addEventListener('input', () => {
-            if (monthValue) monthValue.textContent = monthNames[parseInt(monthFilter.value) - 1];
-            applyDateFilter();
-        });
-    }
-}
-
-function applyDateFilter() {
-    const year = document.getElementById('yearFilter')?.value;
-    const month = document.getElementById('monthFilter')?.value;
-    
-    if (!year || !month) return;
-    
-    const filteredByDate = appState.filteredData.filter(item => {
-        if (!item.fechaLimite) return false;
-        
-        const itemDate = new Date(item.fechaLimite);
-        const itemYear = itemDate.getFullYear().toString();
-        const itemMonth = (itemDate.getMonth() + 1).toString();
-        
-        return itemYear === year && itemMonth === month;
-    });
-    
-    renderTable(filteredByDate);
-}
-
-// Enhanced Table with Column Management
-function setupTable() {
-    setupTableHeader();
-    renderTable();
-}
-
-function setupTableHeader() {
-    const header = document.getElementById('tableHeader');
-    if (!header) return;
-
-    // Make columns draggable and sortable
-    const ths = header.querySelectorAll('th[data-column]');
-    ths.forEach(th => {
-        const column = th.dataset.column;
-        
-        // Setup sorting
-        if (th.classList.contains('sortable')) {
-            th.addEventListener('click', (e) => {
-                // Don't sort if clicking on resize handle
-                if (e.target.classList.contains('resize-handle')) return;
-                toggleSort(column);
-            });
-        }
-
-        // Setup resizing
-        if (th.classList.contains('resizable')) {
-            setupColumnResize(th);
-        }
-
-        // Setup dragging
-        setupColumnDrag(th);
-    });
-}
-
-function toggleSort(column) {
-    if (appState.sortConfig.column === column) {
-        // Toggle direction
-        if (appState.sortConfig.direction === 'asc') {
-            appState.sortConfig.direction = 'desc';
-        } else if (appState.sortConfig.direction === 'desc') {
-            appState.sortConfig = { column: null, direction: null };
-        } else {
-            appState.sortConfig.direction = 'asc';
-        }
-    } else {
-        appState.sortConfig = { column, direction: 'asc' };
-    }
-
-    updateSortIcons();
-    renderTable();
-}
-
-function updateSortIcons() {
-    const ths = document.querySelectorAll('th.sortable');
-    ths.forEach(th => {
-        th.classList.remove('asc', 'desc');
-        if (th.dataset.column === appState.sortConfig.column) {
-            th.classList.add(appState.sortConfig.direction || '');
-        }
-    });
-}
-
-function setupColumnResize(th) {
-    const resizeHandle = th.querySelector('.resize-handle');
-    if (!resizeHandle) return;
-
-    let startX, startWidth, isResizing = false;
-
-    resizeHandle.addEventListener('mousedown', (e) => {
-        isResizing = true;
-        startX = e.clientX;
-        startWidth = th.offsetWidth;
-        resizeHandle.classList.add('active');
-        
-        document.addEventListener('mousemove', handleResize);
-        document.addEventListener('mouseup', stopResize);
-        e.preventDefault();
-        e.stopPropagation();
-    });
-
-    function handleResize(e) {
-        if (!isResizing) return;
-        const width = startWidth + (e.clientX - startX);
-        th.style.width = Math.max(100, width) + 'px';
-        appState.columnWidths[th.dataset.column] = th.style.width;
-    }
-
-    function stopResize() {
-        isResizing = false;
-        resizeHandle.classList.remove('active');
-        document.removeEventListener('mousemove', handleResize);
-        document.removeEventListener('mouseup', stopResize);
-    }
-}
-
-function setupColumnDrag(th) {
-    const thContent = th.querySelector('.th-content');
-    if (!thContent) return;
-
-    th.draggable = true;
-    
-    th.addEventListener('dragstart', (e) => {
-        th.classList.add('dragging');
-        e.dataTransfer.setData('text/plain', th.dataset.column);
-    });
-
-    th.addEventListener('dragover', (e) => {
-        e.preventDefault();
-    });
-
-    th.addEventListener('drop', (e) => {
-        e.preventDefault();
-        const draggedColumn = e.dataTransfer.getData('text/plain');
-        const dropColumn = th.dataset.column;
-        
-        if (draggedColumn !== dropColumn) {
-            reorderColumns(draggedColumn, dropColumn);
-        }
-    });
-
-    th.addEventListener('dragend', () => {
-        th.classList.remove('dragging');
-    });
-}
-
-function reorderColumns(draggedColumn, dropColumn) {
-    const currentOrder = [...appState.columnOrder];
-    const draggedIndex = currentOrder.indexOf(draggedColumn);
-    const dropIndex = currentOrder.indexOf(dropColumn);
-
-    if (draggedIndex !== -1 && dropIndex !== -1) {
-        currentOrder.splice(draggedIndex, 1);
-        currentOrder.splice(dropIndex, 0, draggedColumn);
-        appState.columnOrder = currentOrder;
-        
-        // Rebuild table header
-        rebuildTableHeader();
-        renderTable();
-    }
-}
-
-function rebuildTableHeader() {
-    const header = document.getElementById('tableHeader');
-    if (!header) return;
-
-    const columnConfig = {
-        abreviatura: { title: 'Abreviatura', sortable: true, resizable: true },
-        entidad: { title: 'Entidad', sortable: true, resizable: true },
-        obligacion: { title: 'Obligación', sortable: true, resizable: true },
-        fechaLimite: { title: 'Fecha Límite', sortable: true, resizable: true },
-        estado: { title: 'Estado', sortable: true, resizable: true }
-    };
-
-    header.innerHTML = '';
-
-    appState.columnOrder.forEach(columnKey => {
-        const config = columnConfig[columnKey];
-        if (!config) return;
-
-        const th = document.createElement('th');
-        th.dataset.column = columnKey;
-        th.className = 'resizable sortable';
-        
-        if (appState.columnWidths[columnKey]) {
-            th.style.width = appState.columnWidths[columnKey];
-        }
-
-        th.innerHTML = `
-            <div class="th-content">
-                <span>${config.title}</span>
-                <span class="sort-icon">↕️</span>
-                <div class="resize-handle"></div>
-            </div>
-        `;
-
-        header.appendChild(th);
-    });
-
-    // Add actions column
-    const actionsth = document.createElement('th');
-    actionsth.dataset.column = 'acciones';
-    actionsth.innerHTML = '<div class="th-content"><span>Acciones</span></div>';
-    header.appendChild(actionsth);
-
-    setupTableHeader();
-}
-
-function renderTable(dataOverride = null) {
+// Render table
+function renderTable() {
     const tbody = document.getElementById('tableBody');
     if (!tbody) return;
     
-    let dataToRender = dataOverride || appState.filteredData;
-
-    // Apply sorting
-    if (appState.sortConfig.column && appState.sortConfig.direction) {
-        dataToRender = [...dataToRender].sort((a, b) => {
-            const aVal = a[appState.sortConfig.column] || '';
-            const bVal = b[appState.sortConfig.column] || '';
-            
-            let result = 0;
-            if (appState.sortConfig.column === 'fechaLimite') {
-                result = new Date(aVal) - new Date(bVal);
-            } else {
-                result = aVal.toString().localeCompare(bVal.toString());
-            }
-            
-            return appState.sortConfig.direction === 'asc' ? result : -result;
-        });
-    }
-    
     tbody.innerHTML = '';
 
-    dataToRender.forEach(item => {
+    appState.filteredData.forEach(item => {
         const row = document.createElement('tr');
-        
-        const cells = [];
-        appState.columnOrder.forEach(columnKey => {
-            let cellContent = '';
-            
-            switch (columnKey) {
-                case 'abreviatura':
-                    cellContent = item.abreviatura;
-                    break;
-                case 'entidad':
-                    cellContent = item.entidad;
-                    break;
-                case 'obligacion':
-                    cellContent = item.obligacion;
-                    break;
-                case 'fechaLimite':
-                    cellContent = formatDate(item.fechaLimite);
-                    break;
-                case 'estado':
-                    cellContent = `<span class="status status--${item.estado}">${getStatusLabel(item.estado)}</span>`;
-                    break;
-            }
-            
-            cells.push(`<td>${cellContent}</td>`);
-        });
-
-        // Add actions column
-        cells.push(`
+        row.innerHTML = `
+            <td>${item.entity}</td>
+            <td>${item.type}</td>
+            <td>${item.description}</td>
+            <td>${formatDate(item.dueDate)}</td>
+            <td class="status-cell">
+                <span class="status status--${getStatusClass(item.status)}">${item.status}</span>
+            </td>
+            <td>${item.notes}</td>
             <td class="table-actions">
                 <button class="btn btn--sm btn--outline btn-icon" onclick="editRecord(${item.rowIndex})" title="Editar">
                     ✏️
                 </button>
             </td>
-        `);
-
-        row.innerHTML = cells.join('');
+        `;
         tbody.appendChild(row);
     });
 }
 
-function getStatusLabel(status) {
-    const labels = {
-        'presentada': 'Presentada',
-        'pendiente': 'Pendiente',
-        'no_aplica': 'No Aplica',
-        'vencida': 'Vencida'
-    };
-    return labels[status] || status;
+// Format date for display
+function formatDate(dateString) {
+    if (!dateString) return '';
+    try {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('es-ES');
+    } catch {
+        return dateString;
+    }
 }
 
-// Calendar Setup
+// Get status CSS class
+function getStatusClass(status) {
+    switch (status?.toLowerCase()) {
+        case 'completado': return 'success';
+        case 'vencido': return 'error';
+        case 'en proceso': return 'warning';
+        default: return 'info';
+    }
+}
+
+// Setup calendar
 function setupCalendar() {
     const calendarEl = document.getElementById('calendar');
     if (!calendarEl || typeof FullCalendar === 'undefined') return;
@@ -1020,6 +947,7 @@ function setupCalendar() {
     appState.calendar.render();
 }
 
+// Update calendar
 function updateCalendar() {
     if (appState.calendar) {
         appState.calendar.removeAllEvents();
@@ -1027,29 +955,31 @@ function updateCalendar() {
     }
 }
 
+// Get calendar events
 function getCalendarEvents() {
     return appState.filteredData.map(item => ({
-        title: `${item.abreviatura} – ${item.entidad} – ${item.obligacion}`,
-        date: item.fechaLimite,
-        color: getEventColor(item.estado),
+        title: `${item.entity} - ${item.type}`,
+        date: item.dueDate,
+        color: getEventColor(item.status),
         extendedProps: {
             rowIndex: item.rowIndex,
-            estado: item.estado
+            description: item.description,
+            status: item.status
         }
     }));
 }
 
+// Get event color based on status
 function getEventColor(status) {
-    const colors = {
-        'presentada': '#22c55e',
-        'pendiente': '#f59e0b',
-        'no_aplica': '#6b7280',
-        'vencida': '#ef4444'
-    };
-    return colors[status] || '#6b7280';
+    switch (status?.toLowerCase()) {
+        case 'completado': return '#21805C'; // success color
+        case 'vencido': return '#C0152F'; // error color
+        case 'en proceso': return '#A84B2F'; // warning color
+        default: return '#626C71'; // info color
+    }
 }
 
-// Stats Update
+// Update stats
 function updateStats() {
     const totalEl = document.getElementById('totalCount');
     const upcomingEl = document.getElementById('upcomingCount');
@@ -1062,17 +992,17 @@ function updateStats() {
     today.setHours(0, 0, 0, 0);
     
     const upcoming = appState.filteredData.filter(item => {
-        if (!item.fechaLimite || item.estado === 'presentada') return false;
-        const dueDate = new Date(item.fechaLimite);
+        if (!item.dueDate) return false;
+        const dueDate = new Date(item.dueDate);
         const diffTime = dueDate - today;
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        return diffDays >= 0 && diffDays <= 30;
+        return diffDays >= 0 && diffDays <= 7 && item.status !== 'Completado';
     }).length;
     
     const overdue = appState.filteredData.filter(item => {
-        if (!item.fechaLimite || item.estado === 'presentada') return false;
-        const dueDate = new Date(item.fechaLimite);
-        return dueDate < today;
+        if (!item.dueDate) return false;
+        const dueDate = new Date(item.dueDate);
+        return dueDate < today && item.status !== 'Completado';
     }).length;
 
     totalEl.textContent = total;
@@ -1080,9 +1010,9 @@ function updateStats() {
     overdueEl.textContent = overdue;
 }
 
-// Edit Modal
+// Edit record
 window.editRecord = function(rowIndex) {
-    const record = appState.userFilteredData.find(item => item.rowIndex === rowIndex);
+    const record = appState.data.find(item => item.rowIndex === rowIndex);
     if (!record) {
         AlertManager.error('Registro no encontrado');
         return;
@@ -1090,22 +1020,13 @@ window.editRecord = function(rowIndex) {
 
     appState.currentEditingRow = rowIndex;
     
-    // Populate modal with read-only and editable fields
-    const fields = {
-        editEmpresa: record.empresa,
-        editAbreviatura: record.abreviatura,
-        editResponsable: record.responsable,
-        editEntidad: record.entidad,
-        editObligacion: record.obligacion,
-        editPeriodo: record.periodo,
-        editAno: record.ano,
-        editFechaLimite: record.fechaLimite,
-        editEstado: record.estado
-    };
+    // Populate modal
+    const fields = ['editEntity', 'editType', 'editDescription', 'editDueDate', 'editStatus', 'editNotes'];
+    const values = [record.entity, record.type, record.description, record.dueDate, record.status, record.notes];
     
-    Object.keys(fields).forEach(fieldId => {
+    fields.forEach((fieldId, index) => {
         const field = document.getElementById(fieldId);
-        if (field) field.value = fields[fieldId];
+        if (field) field.value = values[index];
     });
 
     // Show modal
@@ -1113,37 +1034,57 @@ window.editRecord = function(rowIndex) {
     if (modal) modal.classList.remove('hidden');
 };
 
-// Modal Setup
+// Setup modals
 function setupModals() {
-    setupEditModal();
-    setupAlarmModal();
-    setupUserModal();
-}
-
-function setupEditModal() {
-    const modal = document.getElementById('editModal');
+    // Edit Modal
+    const editModal = document.getElementById('editModal');
     const closeBtn = document.getElementById('closeModal');
     const cancelBtn = document.getElementById('cancelEdit');
-    const form = document.getElementById('editForm');
+    const editForm = document.getElementById('editForm');
 
     if (closeBtn) closeBtn.addEventListener('click', closeEditModal);
     if (cancelBtn) cancelBtn.addEventListener('click', closeEditModal);
     
-    if (modal) {
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) closeEditModal();
+    if (editModal) {
+        editModal.addEventListener('click', (e) => {
+            if (e.target === editModal) closeEditModal();
         });
     }
 
-    if (form) form.addEventListener('submit', saveRecord);
+    if (editForm) editForm.addEventListener('submit', saveRecord);
+
+    // Login Modal
+    const loginModal = document.getElementById('loginModal');
+    const closeLoginBtn = document.getElementById('closeLoginModal');
+    const cancelLoginBtn = document.getElementById('cancelLogin');
+    const loginForm = document.getElementById('loginForm');
+
+    if (closeLoginBtn) closeLoginBtn.addEventListener('click', closeLoginModal);
+    if (cancelLoginBtn) cancelLoginBtn.addEventListener('click', closeLoginModal);
+    
+    if (loginModal) {
+        loginModal.addEventListener('click', (e) => {
+            if (e.target === loginModal) closeLoginModal();
+        });
+    }
+
+    if (loginForm) loginForm.addEventListener('submit', handleUserLogin);
 }
 
+// Close edit modal
 function closeEditModal() {
     const modal = document.getElementById('editModal');
     if (modal) modal.classList.add('hidden');
     appState.currentEditingRow = null;
 }
 
+// Close login modal
+function closeLoginModal() {
+    const modal = document.getElementById('loginModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+// Save record
 async function saveRecord(e) {
     e.preventDefault();
     
@@ -1156,8 +1097,12 @@ async function saveRecord(e) {
         appState.setLoading(true);
 
         const updatedData = {
-            fechaLimite: document.getElementById('editFechaLimite')?.value || '',
-            estado: document.getElementById('editEstado')?.value || 'pendiente'
+            entity: document.getElementById('editEntity')?.value || '',
+            type: document.getElementById('editType')?.value || '',
+            description: document.getElementById('editDescription')?.value || '',
+            dueDate: document.getElementById('editDueDate')?.value || '',
+            status: document.getElementById('editStatus')?.value || 'Pendiente',
+            notes: document.getElementById('editNotes')?.value || ''
         };
 
         // Update local data
@@ -1166,12 +1111,12 @@ async function saveRecord(e) {
             Object.assign(appState.data[recordIndex], updatedData);
         }
 
-        // Update filtered data
-        const userFilteredIndex = appState.userFilteredData.findIndex(item => item.rowIndex === appState.currentEditingRow);
-        if (userFilteredIndex !== -1) {
-            Object.assign(appState.userFilteredData[userFilteredIndex], updatedData);
+        // Save to Google Sheets if connected
+        if (appState.isSignedIn) {
+            await safeGoogleSheetsUpdate(appState.currentEditingRow, updatedData);
         }
 
+        // Update filtered data
         const filteredIndex = appState.filteredData.findIndex(item => item.rowIndex === appState.currentEditingRow);
         if (filteredIndex !== -1) {
             Object.assign(appState.filteredData[filteredIndex], updatedData);
@@ -1192,80 +1137,79 @@ async function saveRecord(e) {
     }
 }
 
-// Simplified functions for modal setup (alarm and user modals)
-function setupAlarmModal() {
-    const alarmBtn = document.getElementById('alarmBtn');
-    if (alarmBtn) {
-        alarmBtn.addEventListener('click', () => {
-            AlertManager.info('Sistema de alarmas disponible para usuarios logueados');
-        });
-    }
-}
-
-function setupUserModal() {
-    const userMgmtBtn = document.getElementById('userMgmtBtn');
-    if (userMgmtBtn) {
-        userMgmtBtn.addEventListener('click', () => {
-            AlertManager.info('Gestión de usuarios disponible para administradores');
-        });
-    }
-}
-
-// Header Actions
-function setupHeaderActions() {
-    const logoutBtn = document.getElementById('logoutBtn');
-    if (logoutBtn) {
-        logoutBtn.addEventListener('click', () => {
-            AuthManager.logout();
-            AlertManager.info('Sesión cerrada');
-        });
-    }
-}
-
-// Utility Functions
-function formatDate(dateString) {
-    if (!dateString) return '';
+// Safe Google Sheets update with error handling
+async function safeGoogleSheetsUpdate(rowIndex, data) {
     try {
-        const date = new Date(dateString);
-        return date.toLocaleDateString('es-ES');
-    } catch {
-        return dateString;
-    }
-}
+        const values = [
+            [data.entity, data.type, data.description, data.dueDate, data.status, data.notes]
+        ];
 
-// Google APIs Initialization (simplified for demo)
-async function initializeGoogleAPIs() {
-    try {
-        console.log('Initializing Google APIs...');
-        appState.updateConnectionStatus('loading', 'Inicializando APIs de Google...');
-
-        // Simulate API initialization
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        appState.updateConnectionStatus('success', 'APIs de Google inicializadas (modo demo)');
-        AlertManager.info('Usando modo demostración. Los datos no se sincronizarán con Google Sheets.');
-
+        await gapi.client.sheets.spreadsheets.values.update({
+            spreadsheetId: CONFIG.SPREADSHEET_ID,
+            range: `Sheet1!A${rowIndex}:F${rowIndex}`,
+            valueInputOption: 'USER_ENTERED',
+            resource: { values }
+        });
+        
+        console.log('Successfully updated Google Sheets');
     } catch (error) {
-        console.error('Error initializing Google APIs:', error);
-        appState.updateConnectionStatus('error', `Error al inicializar: ${error.message}`);
-        AlertManager.warning('Error al conectar con Google APIs. Usando modo demostración.');
+        console.error('Error updating Google Sheets:', error);
+        AlertManager.warning('Cambio guardado localmente. Error al sincronizar con Google Sheets.');
+        throw error;
+    }
+}
+
+// Clear all data
+function clearAllData() {
+    appState.data = [];
+    appState.filteredData = [];
+    
+    const tbody = document.getElementById('tableBody');
+    if (tbody) tbody.innerHTML = '';
+    
+    if (appState.calendar) {
+        appState.calendar.removeAllEvents();
+    }
+    
+    updateStats();
+}
+
+// Check for stored auth and user data on startup
+function checkStoredAuth() {
+    const storedUser = StorageManager.get(StorageManager.keys.USER_DATA);
+    if (storedUser) {
+        appState.setCurrentUser(storedUser);
+        // Note: We don't auto-login, just restore user info if connection succeeds
     }
 }
 
 // Initialize app when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded, initializing app...');
-    console.log('Initial users:', appState.users.length);
     
-    // Setup components
-    setupLogin();
-    setupHeaderActions();
+    // Always stop loading initially and show demo data
+    appState.setLoading(false);
     
-    // Show login screen
-    showLoginScreen();
+    // Setup modals
+    setupModals();
     
-    // Initialize Google APIs in background
+    // Check for stored auth data
+    checkStoredAuth();
+    
+    // Load demo data immediately to show something
+    loadDemoData();
+    
+    // Try to initialize Google APIs in background
     setTimeout(() => {
-        initializeGoogleAPIs();
+        if (!appState.connectionAttempted) {
+            initializeGoogleAPIs();
+        }
     }, 1000);
+});
+
+// Window unload event to clean up
+window.addEventListener('beforeunload', () => {
+    if (appState.calendar) {
+        appState.calendar.destroy();
+    }
 });

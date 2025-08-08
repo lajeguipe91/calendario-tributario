@@ -1,4 +1,4 @@
-// Google Sheets Tax Calendar Application - Fixed Login and Filtering
+// Enhanced Google Sheets Tax Calendar Application - Fixed Version
 // Production Configuration
 const CONFIG = {
     API_KEY: 'AIzaSyBdlizVp_hOembaoFJYE_rKHCvFtn9asok',
@@ -6,31 +6,34 @@ const CONFIG = {
     SPREADSHEET_ID: '10L6aSKz8oPtq4ZpXcO921vCIciHWlCRqo_w5pAHc3yo',
     DISCOVERY_DOC: 'https://sheets.googleapis.com/$discovery/rest?version=v4',
     SCOPES: 'https://www.googleapis.com/auth/spreadsheets',
-    DATA_RANGE: 'DATA!A:I',
-    USERS_RANGE: 'USUARIOS!A:E'
+    RANGE: 'Sheet1!A:L'
 };
 
 // Global State Management
 class AppState {
     constructor() {
         this.isSignedIn = false;
-        this.isLoggedIn = false;
         this.gsiInited = false;
         this.gapiInited = false;
         this.isLoading = false;
         this.data = [];
         this.filteredData = [];
-        this.users = [];
-        this.currentUser = null;
         this.filters = {
+            empresas: new Set(),
             entities: new Set(),
-            types: new Set(),
+            responsables: new Set(),
+            obligaciones: new Set(),
             statuses: new Set()
         };
         this.calendar = null;
         this.currentEditingRow = null;
         this.initializationAttempts = 0;
         this.maxInitAttempts = 3;
+        this.alarms = [];
+        this.sortConfig = [];
+        this.columnWidths = {};
+        this.columnOrder = ['abreviatura', 'entidad', 'obligacion', 'periodo', 'fecha_limite', 'estado'];
+        this.activeStatFilter = null;
     }
 
     setLoading(loading) {
@@ -111,22 +114,333 @@ class AlertManager {
         }
     }
 
-    static success(message) {
-        this.show(message, 'success');
+    static success(message) { this.show(message, 'success'); }
+    static error(message) { this.show(message, 'error', 8000); }
+    static warning(message) { this.show(message, 'warning'); }
+    static info(message) { this.show(message, 'info'); }
+}
+
+// Alarm Management System
+class AlarmManager {
+    constructor() {
+        this.alarms = [];
+        this.emails = [];
     }
 
-    static error(message) {
-        this.show(message, 'error', 8000);
+    init() {
+        this.setupAlarmModal();
+        this.loadAlarms();
     }
 
-    static warning(message) {
-        this.show(message, 'warning');
+    setupAlarmModal() {
+        const alarmBtn = document.getElementById('alarmManagementBtn');
+        const modal = document.getElementById('alarmModal');
+        const closeBtn = document.getElementById('closeAlarmModal');
+        
+        if (alarmBtn) {
+            alarmBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.openModal();
+            });
+        }
+        
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => this.closeModal());
+        }
+        
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) this.closeModal();
+            });
+        }
+
+        this.setupTabs();
+        this.setupAlarmForm();
     }
 
-    static info(message) {
-        this.show(message, 'info');
+    setupTabs() {
+        const tabs = document.querySelectorAll('.alarm-tab');
+        tabs.forEach(tab => {
+            tab.addEventListener('click', (e) => {
+                const targetTab = e.target.dataset.tab;
+                this.switchTab(targetTab);
+            });
+        });
+    }
+
+    switchTab(tabName) {
+        document.querySelectorAll('.alarm-tab').forEach(tab => tab.classList.remove('active'));
+        document.querySelectorAll('.alarm-tab-content').forEach(content => content.classList.remove('active'));
+        
+        const targetTab = document.querySelector(`[data-tab="${tabName}"]`);
+        const targetContent = document.getElementById(`${tabName}AlarmTab`);
+        
+        if (targetTab) targetTab.classList.add('active');
+        if (targetContent) targetContent.classList.add('active');
+
+        if (tabName === 'list') {
+            this.renderAlarmList();
+        }
+    }
+
+    setupAlarmForm() {
+        const form = document.getElementById('alarmForm');
+        const addEmailBtn = document.getElementById('addEmailBtn');
+        const testBtn = document.getElementById('testAlarmBtn');
+
+        if (form) {
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.createAlarm(e);
+            });
+        }
+        
+        if (addEmailBtn) {
+            addEmailBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.addEmail();
+            });
+        }
+        
+        if (testBtn) {
+            testBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.testAlarm();
+            });
+        }
+
+        this.populateAlarmSelects();
+        this.setupEmailInput();
+    }
+
+    populateAlarmSelects() {
+        const entitySelect = document.getElementById('alarmEntity');
+        const obligacionSelect = document.getElementById('alarmObligacion');
+
+        if (!entitySelect || !obligacionSelect) return;
+
+        // Clear existing options
+        entitySelect.innerHTML = '<option value="">Seleccionar entidad</option>';
+        obligacionSelect.innerHTML = '<option value="">Seleccionar obligación</option>';
+
+        // Populate with unique values from data
+        const entities = new Set();
+        const obligaciones = new Set();
+
+        appState.data.forEach(item => {
+            if (item.entidad) entities.add(item.entidad);
+            if (item.obligacion) obligaciones.add(item.obligacion);
+        });
+
+        Array.from(entities).sort().forEach(entity => {
+            const option = document.createElement('option');
+            option.value = entity;
+            option.textContent = entity;
+            entitySelect.appendChild(option);
+        });
+
+        Array.from(obligaciones).sort().forEach(obligacion => {
+            const option = document.createElement('option');
+            option.value = obligacion;
+            option.textContent = obligacion;
+            obligacionSelect.appendChild(option);
+        });
+    }
+
+    setupEmailInput() {
+        const emailInput = document.getElementById('emailInput');
+        if (emailInput) {
+            emailInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.addEmail();
+                }
+            });
+        }
+    }
+
+    addEmail() {
+        const emailInput = document.getElementById('emailInput');
+        const emailList = document.getElementById('emailList');
+
+        if (!emailInput || !emailList) return;
+
+        const email = emailInput.value.trim();
+        if (!email || !this.isValidEmail(email)) {
+            AlertManager.error('Por favor ingrese un correo electrónico válido');
+            return;
+        }
+
+        if (this.emails.includes(email)) {
+            AlertManager.warning('Este correo ya ha sido agregado');
+            return;
+        }
+
+        this.emails.push(email);
+        this.renderEmailList();
+        emailInput.value = '';
+    }
+
+    renderEmailList() {
+        const emailList = document.getElementById('emailList');
+        if (!emailList) return;
+
+        emailList.innerHTML = this.emails.map(email => `
+            <div class="email-tag" data-email="${email}">
+                <span>${email}</span>
+                <button type="button" class="email-tag-remove" onclick="alarmManager.removeEmail('${email}')">&times;</button>
+            </div>
+        `).join('');
+    }
+
+    removeEmail(email) {
+        this.emails = this.emails.filter(e => e !== email);
+        this.renderEmailList();
+    }
+
+    isValidEmail(email) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    }
+
+    createAlarm(e) {
+        e.preventDefault();
+
+        if (this.emails.length === 0) {
+            AlertManager.error('Por favor agregue al menos un correo electrónico');
+            return;
+        }
+
+        const entidad = document.getElementById('alarmEntity').value;
+        const obligacion = document.getElementById('alarmObligacion').value;
+        const daysBefore = parseInt(document.getElementById('alarmDaysBefore').value);
+        const frequency = parseInt(document.getElementById('alarmFrequency').value);
+        const message = document.getElementById('alarmMessage').value;
+
+        if (!entidad || !obligacion) {
+            AlertManager.error('Por favor seleccione entidad y obligación');
+            return;
+        }
+
+        const alarm = {
+            id: Date.now(),
+            entidad,
+            obligacion,
+            daysBefore,
+            frequency,
+            emails: [...this.emails],
+            message,
+            active: true,
+            createdAt: new Date().toISOString()
+        };
+
+        this.alarms.push(alarm);
+        this.saveAlarms();
+        AlertManager.success('Alarma creada exitosamente');
+        this.resetForm();
+        this.switchTab('list');
+    }
+
+    testAlarm() {
+        if (this.emails.length === 0) {
+            AlertManager.error('Por favor agregue al menos un correo electrónico para probar');
+            return;
+        }
+
+        AlertManager.info(`Alarma de prueba enviada a: ${this.emails.join(', ')}`);
+    }
+
+    resetForm() {
+        const form = document.getElementById('alarmForm');
+        if (form) form.reset();
+        
+        this.emails = [];
+        this.renderEmailList();
+        
+        document.getElementById('alarmDaysBefore').value = '8';
+        document.getElementById('alarmFrequency').value = '2';
+    }
+
+    renderAlarmList() {
+        const alarmList = document.getElementById('alarmList');
+        const alarmCount = document.getElementById('alarmCount');
+
+        if (!alarmList || !alarmCount) return;
+
+        alarmCount.textContent = this.alarms.length;
+
+        if (this.alarms.length === 0) {
+            alarmList.innerHTML = '<p style="text-align: center; color: var(--color-text-secondary);">No hay alarmas configuradas</p>';
+            return;
+        }
+
+        alarmList.innerHTML = this.alarms.map(alarm => `
+            <div class="alarm-item">
+                <div class="alarm-info">
+                    <h6>${alarm.entidad} - ${alarm.obligacion}</h6>
+                    <div class="alarm-details">
+                        ${alarm.daysBefore} días antes, cada ${alarm.frequency} días
+                    </div>
+                    <div class="alarm-emails">
+                        Correos: ${alarm.emails.join(', ')}
+                    </div>
+                </div>
+                <div class="alarm-actions">
+                    <button class="btn btn--sm btn--outline" onclick="alarmManager.toggleAlarm(${alarm.id})">
+                        ${alarm.active ? 'Desactivar' : 'Activar'}
+                    </button>
+                    <button class="btn btn--sm btn--outline" onclick="alarmManager.deleteAlarm(${alarm.id})">
+                        Eliminar
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    toggleAlarm(id) {
+        const alarm = this.alarms.find(a => a.id === id);
+        if (alarm) {
+            alarm.active = !alarm.active;
+            this.saveAlarms();
+            this.renderAlarmList();
+            AlertManager.success(`Alarma ${alarm.active ? 'activada' : 'desactivada'}`);
+        }
+    }
+
+    deleteAlarm(id) {
+        if (confirm('¿Está seguro de que desea eliminar esta alarma?')) {
+            this.alarms = this.alarms.filter(a => a.id !== id);
+            this.saveAlarms();
+            this.renderAlarmList();
+            AlertManager.success('Alarma eliminada');
+        }
+    }
+
+    openModal() {
+        const modal = document.getElementById('alarmModal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            this.populateAlarmSelects();
+        }
+    }
+
+    closeModal() {
+        const modal = document.getElementById('alarmModal');
+        if (modal) modal.classList.add('hidden');
+    }
+
+    saveAlarms() {
+        // In a real application, this would save to a backend
+        console.log('Alarms saved:', this.alarms);
+    }
+
+    loadAlarms() {
+        // In a real application, this would load from a backend
+        this.alarms = [];
     }
 }
+
+// Initialize alarm manager
+const alarmManager = new AlarmManager();
 
 // Google APIs Initialization
 async function initializeGoogleAPIs() {
@@ -139,7 +453,6 @@ async function initializeGoogleAPIs() {
             throw new Error('Se agotaron los intentos de conexión');
         }
 
-        // Wait for gapi to be available with timeout
         let gapiReady = false;
         let attempts = 0;
         const maxAttempts = 50;
@@ -157,7 +470,6 @@ async function initializeGoogleAPIs() {
             throw new Error('Google API library no disponible');
         }
 
-        // Initialize gapi with timeout
         await Promise.race([
             new Promise((resolve, reject) => {
                 gapi.load('client', {
@@ -183,7 +495,6 @@ async function initializeGoogleAPIs() {
         appState.gapiInited = true;
         console.log('GAPI initialized successfully');
 
-        // Initialize Google Sign-In
         let googleAccountsReady = false;
         attempts = 0;
 
@@ -221,33 +532,24 @@ async function initializeGoogleAPIs() {
         console.error('Error initializing Google APIs:', error);
         appState.updateConnectionStatus('error', `Error al inicializar: ${error.message}`);
         AlertManager.error(`Error al conectar con Google: ${error.message}`);
+        
         setupAuthButton();
         loadDemoData();
     }
 }
 
-// Handle credential response
 function handleCredentialResponse(response) {
     console.log('Credential response received');
     handleAuthClick();
 }
 
-// Setup auth button
 function setupAuthButton() {
     const authBtn = document.getElementById('authBtn');
-    const loginBtn = document.getElementById('loginBtn');
     const signoutBtn = document.getElementById('signoutBtn');
     const retryBtn = document.getElementById('retryBtn');
 
-    if (authBtn) {
-        authBtn.addEventListener('click', handleAuthClick);
-    }
-    if (loginBtn) {
-        loginBtn.addEventListener('click', showLoginModal);
-    }
-    if (signoutBtn) {
-        signoutBtn.addEventListener('click', handleSignoutClick);
-    }
+    if (authBtn) authBtn.addEventListener('click', handleAuthClick);
+    if (signoutBtn) signoutBtn.addEventListener('click', handleSignoutClick);
     if (retryBtn) {
         retryBtn.addEventListener('click', () => {
             appState.updateConnectionStatus('loading', 'Reintentando conexión...');
@@ -259,7 +561,6 @@ function setupAuthButton() {
     updateAuthUI();
 }
 
-// Handle authorization
 async function handleAuthClick() {
     if (!appState.gapiInited) {
         AlertManager.error('Las APIs de Google no están inicializadas');
@@ -288,7 +589,7 @@ async function handleAuthClick() {
                     updateAuthUI();
                     appState.updateConnectionStatus('success', 'Conectado a Google Sheets');
                     
-                    await loadUsers();
+                    await loadSpreadsheetData();
                     AlertManager.success('Conectado exitosamente a Google Sheets');
                 } catch (callbackError) {
                     console.error('Authorization callback error:', callbackError);
@@ -316,180 +617,6 @@ async function handleAuthClick() {
     }
 }
 
-// Load users from USUARIOS sheet
-async function loadUsers() {
-    try {
-        console.log('Loading users from USUARIOS sheet...');
-        appState.setLoading(true);
-
-        const response = await gapi.client.sheets.spreadsheets.values.get({
-            spreadsheetId: CONFIG.SPREADSHEET_ID,
-            range: CONFIG.USERS_RANGE,
-        });
-
-        const rows = response.result.values;
-        if (!rows || rows.length === 0) {
-            throw new Error('No se encontraron usuarios en la hoja USUARIOS');
-        }
-
-        // Process users data (skip header row)
-        // A = Usuario, B = Contrasena, C = Rol, D = Empresas, E = Correo
-        appState.users = rows.slice(1).map((row, index) => ({
-            usuario: row[0] || '',        // Column A
-            contrasena: row[1] || '',     // Column B (FIXED - was row[4])
-            rol: row[2] || '',            // Column C
-            empresas: row[3] || '',       // Column D (delimited by ";")
-            correo: row[4] || ''          // Column E
-        }));
-
-        console.log(`Loaded ${appState.users.length} users`);
-        populateUserDropdown();
-        AlertManager.success(`${appState.users.length} usuarios cargados`);
-
-    } catch (error) {
-        console.error('Error loading users:', error);
-        AlertManager.error('Error al cargar usuarios: ' + error.message);
-        // Create demo users for testing
-        appState.users = [
-            {
-                usuario: 'admin',
-                contrasena: 'admin123',
-                rol: 'Administrador',
-                empresas: '',
-                correo: 'admin@test.com'
-            },
-            {
-                usuario: 'responsable1',
-                contrasena: 'resp123',
-                rol: 'Responsable',
-                empresas: 'ABC;XYZ',
-                correo: 'resp1@test.com'
-            }
-        ];
-        populateUserDropdown();
-        AlertManager.info('Usando usuarios de demostración para pruebas');
-    } finally {
-        appState.setLoading(false);
-    }
-}
-
-// Populate user dropdown
-function populateUserDropdown() {
-    const select = document.getElementById('loginUsuario');
-    if (!select) return;
-
-    select.innerHTML = '<option value="">Seleccionar usuario...</option>';
-    
-    appState.users.forEach(user => {
-        const option = document.createElement('option');
-        option.value = user.usuario;
-        option.textContent = user.usuario;
-        select.appendChild(option);
-    });
-
-    console.log('User dropdown populated with', appState.users.length, 'users');
-}
-
-// Show login modal
-function showLoginModal() {
-    console.log('Show login modal called');
-    
-    // Always create demo users if none exist
-    if (appState.users.length === 0) {
-        console.log('No users found, creating demo users');
-        appState.users = [
-            {
-                usuario: 'admin',
-                contrasena: 'admin123',
-                rol: 'Administrador',
-                empresas: '',
-                correo: 'admin@test.com'
-            },
-            {
-                usuario: 'responsable1',
-                contrasena: 'resp123',
-                rol: 'Responsable',
-                empresas: 'ABC;XYZ',
-                correo: 'resp1@test.com'
-            }
-        ];
-        populateUserDropdown();
-        AlertManager.info('Usuarios de demostración cargados para pruebas');
-    }
-
-    const modal = document.getElementById('loginModal');
-    if (modal) {
-        console.log('Showing login modal');
-        modal.classList.remove('hidden');
-        modal.style.display = 'block';
-    } else {
-        console.error('Login modal not found');
-    }
-}
-
-// Handle login
-async function handleLogin(e) {
-    e.preventDefault();
-    console.log('Handle login called');
-
-    const usuario = document.getElementById('loginUsuario')?.value;
-    const contrasena = document.getElementById('loginContrasena')?.value;
-
-    console.log('Login attempt:', usuario);
-
-    if (!usuario || !contrasena) {
-        AlertManager.error('Por favor selecciona un usuario e ingresa la contraseña');
-        return;
-    }
-
-    // Find user and validate password
-    const user = appState.users.find(u => u.usuario === usuario);
-    if (!user) {
-        AlertManager.error('Usuario no encontrado');
-        return;
-    }
-
-    console.log('User found:', user.usuario, 'Role:', user.rol);
-    console.log('Password check:', user.contrasena, '===', contrasena);
-
-    // Validate password against Contrasena column (column B)
-    if (user.contrasena !== contrasena) {
-        AlertManager.error('Contraseña incorrecta');
-        return;
-    }
-
-    // Login successful
-    appState.isLoggedIn = true;
-    appState.currentUser = user;
-    
-    console.log('Login successful for user:', user.usuario);
-    
-    closeLoginModal();
-    updateAuthUI();
-    
-    // Always load DATA sheet after login
-    await loadSpreadsheetData();
-    
-    AlertManager.success(`Bienvenido, ${user.usuario} (${user.rol})`);
-}
-
-// Close login modal
-function closeLoginModal() {
-    console.log('Close login modal called');
-    const modal = document.getElementById('loginModal');
-    if (modal) {
-        modal.classList.add('hidden');
-        modal.style.display = 'none';
-    }
-    
-    // Clear form
-    const usuarioSelect = document.getElementById('loginUsuario');
-    const contrasenaInput = document.getElementById('loginContrasena');
-    if (usuarioSelect) usuarioSelect.value = '';
-    if (contrasenaInput) contrasenaInput.value = '';
-}
-
-// Handle signout
 function handleSignoutClick() {
     try {
         const token = gapi.client.getToken();
@@ -502,11 +629,8 @@ function handleSignoutClick() {
     }
     
     appState.isSignedIn = false;
-    appState.isLoggedIn = false;
-    appState.currentUser = null;
     appState.data = [];
     appState.filteredData = [];
-    appState.users = [];
     
     updateAuthUI();
     clearAllData();
@@ -515,63 +639,23 @@ function handleSignoutClick() {
     AlertManager.info('Sesión cerrada. Mostrando datos de demostración.');
 }
 
-// Update auth UI
 function updateAuthUI() {
     const authBtn = document.getElementById('authBtn');
     const authText = document.getElementById('authText');
-    const loginBtn = document.getElementById('loginBtn');
     const signoutBtn = document.getElementById('signoutBtn');
-    const userInfo = document.getElementById('userInfo');
 
-    console.log('Updating UI - isLoggedIn:', appState.isLoggedIn, 'isSignedIn:', appState.isSignedIn);
-
-    if (authBtn && loginBtn && signoutBtn && userInfo) {
-        if (appState.isLoggedIn && appState.currentUser) {
-            // User is logged in
-            console.log('UI: User logged in');
+    if (authBtn && signoutBtn) {
+        if (appState.isSignedIn) {
             authBtn.classList.add('hidden');
-            loginBtn.classList.add('hidden');
             signoutBtn.classList.remove('hidden');
-            userInfo.classList.remove('hidden');
-            userInfo.textContent = `${appState.currentUser.usuario} (${appState.currentUser.rol})`;
-        } else if (appState.isSignedIn) {
-            // Connected to Google but not logged in
-            console.log('UI: Google connected, not logged in');
-            authBtn.classList.add('hidden');
-            loginBtn.classList.remove('hidden');
-            signoutBtn.classList.remove('hidden');
-            userInfo.classList.add('hidden');
         } else {
-            // Not connected
-            console.log('UI: Not connected');
             authBtn.classList.remove('hidden');
-            loginBtn.classList.add('hidden');
             signoutBtn.classList.add('hidden');
-            userInfo.classList.add('hidden');
             if (authText) authText.textContent = 'Conectar a Google';
         }
     }
 }
 
-// Helper function to concatenate period and year
-function createPeriodoConcat(periodo, ano) {
-    if (!periodo || !ano) return '';
-    return `${periodo}-${ano}`;
-}
-
-// Helper function to split concatenated period
-function splitPeriodoConcat(periodoConcat) {
-    if (!periodoConcat) return { periodo: '', ano: '' };
-    const parts = periodoConcat.split('-');
-    if (parts.length >= 2) {
-        const ano = parts[parts.length - 1];
-        const periodo = parts.slice(0, -1).join('-');
-        return { periodo, ano };
-    }
-    return { periodo: periodoConcat, ano: '' };
-}
-
-// Load spreadsheet data with company filtering
 async function loadSpreadsheetData() {
     try {
         console.log('Loading spreadsheet data...');
@@ -579,7 +663,7 @@ async function loadSpreadsheetData() {
 
         const response = await gapi.client.sheets.spreadsheets.values.get({
             spreadsheetId: CONFIG.SPREADSHEET_ID,
-            range: CONFIG.DATA_RANGE,
+            range: CONFIG.RANGE,
         });
 
         const rows = response.result.values;
@@ -587,38 +671,24 @@ async function loadSpreadsheetData() {
             throw new Error('No se encontraron datos en la hoja de cálculo');
         }
 
-        // Process data (skip header row) - Fixed column mappings
-        const allData = rows.slice(1).map((row, index) => ({
+        const headers = rows[0];
+        appState.data = rows.slice(1).map((row, index) => ({
             rowIndex: index + 2,
-            empresa: row[0] || '',           // Column A
-            abreviatura: row[1] || '',       // Column B  
-            responsable: row[2] || '',       // Column C
-            entidad: row[3] || '',           // Column D
-            obligacion: row[4] || '',        // Column E
-            periodo: row[5] || '',           // Column F
-            ano: row[6] || '',               // Column G
-            fechaLimite: row[7] || '',       // Column H
-            estado: row[8] || 'Pendiente',   // Column I
-            periodoConcat: createPeriodoConcat(row[5], row[6])
+            abreviatura: row[0] || '',
+            entidad: row[1] || '',
+            obligacion: row[2] || '',
+            periodo: row[3] || '',
+            fecha_limite: row[4] || '',
+            estado: row[5] || 'Pendiente',
+            empresa: row[6] || '',
+            responsable: row[7] || '',
+            notas: row[8] || '',
+            fecha_presentacion: row[9] || '',
+            monto: row[10] || '',
+            observaciones: row[11] || ''
         }));
 
-        // Apply company filtering based on user role
-        if (appState.currentUser) {
-            if (appState.currentUser.rol === 'Administrador') {
-                // Administrators see all data
-                appState.data = allData;
-                console.log('Admin user - showing all data:', allData.length, 'records');
-            } else {
-                // Responsables see only their assigned companies
-                const userCompanies = parseUserCompanies(appState.currentUser.empresas);
-                appState.data = filterDataByCompanies(allData, userCompanies);
-                console.log('Responsable user - filtered data:', appState.data.length, 'records from', userCompanies);
-            }
-        } else {
-            appState.data = allData;
-        }
-
-        console.log(`Loaded ${appState.data.length} records (filtered from ${allData.length})`);
+        console.log(`Loaded ${appState.data.length} records`);
         appState.filteredData = [...appState.data];
         
         initializeInterface();
@@ -633,113 +703,86 @@ async function loadSpreadsheetData() {
     }
 }
 
-// Parse user companies from semicolon-delimited string
-function parseUserCompanies(empresasString) {
-    if (!empresasString) return [];
-    
-    return empresasString.split(';')
-        .map(company => company.trim().toLowerCase())
-        .filter(company => company.length > 0);
-}
-
-// Filter data by user's assigned companies
-function filterDataByCompanies(allData, userCompanies) {
-    if (userCompanies.length === 0) return [];
-
-    return allData.filter(row => {
-        const empresa = (row.empresa || '').toLowerCase();
-        const abra = (row.abreviatura || '').toLowerCase();
-        
-        // Check if any user company matches empresa or abreviatura (case-insensitive equality)
-        return userCompanies.some(company => 
-            empresa === company || abra === company
-        );
-    });
-}
-
-// Load demo data as fallback
 function loadDemoData() {
     console.log('Loading demo data...');
     
-    const allDemoData = [
+    appState.data = [
         {
             rowIndex: 2,
-            empresa: 'Empresa ABC S.A.C.',
-            abreviatura: 'ABC',
-            responsable: 'Juan Pérez',
+            abreviatura: 'SUNAT-IGV',
             entidad: 'SUNAT',
-            obligacion: 'IGV Mensual',
-            periodo: 'ene-feb',
-            ano: '2025',
-            fechaLimite: '2025-01-12',
+            obligacion: 'Declaración mensual de IGV',
+            periodo: '2025-01',
+            fecha_limite: '2025-01-12',
             estado: 'Pendiente',
-            periodoConcat: 'ene-feb-2025'
+            empresa: 'Empresa ABC',
+            responsable: 'Contador',
+            notas: 'Revisar facturas del mes anterior',
+            fecha_presentacion: '2025-01-12',
+            monto: '15000',
+            observaciones: 'Prioridad alta'
         },
         {
             rowIndex: 3,
-            empresa: 'Servicios XYZ E.I.R.L.',
-            abreviatura: 'XYZ',
-            responsable: 'María González',
+            abreviatura: 'SUNAT-RTA',
             entidad: 'SUNAT',
-            obligacion: 'Renta 3ra Categoría',
-            periodo: 'dic',
-            ano: '2024',
-            fechaLimite: '2025-01-12',
+            obligacion: 'Pago a cuenta de Impuesto a la Renta',
+            periodo: '2025-01',
+            fecha_limite: '2025-01-12',
             estado: 'En Proceso',
-            periodoConcat: 'dic-2024'
+            empresa: 'Empresa ABC',
+            responsable: 'Gerencia',
+            notas: 'En preparación',
+            fecha_presentacion: '2025-01-12',
+            monto: '8500',
+            observaciones: 'Calculando base imponible'
         },
         {
             rowIndex: 4,
-            empresa: 'Constructora DEF S.A.',
-            abreviatura: 'DEF',
-            responsable: 'Carlos Rodríguez',
+            abreviatura: 'ESS-CONTR',
             entidad: 'ESSALUD',
-            obligacion: 'Contribuciones Sociales',
-            periodo: 'dic',
-            ano: '2024',
-            fechaLimite: '2025-01-15',
+            obligacion: 'Declaración y pago de contribuciones',
+            periodo: '2025-01',
+            fecha_limite: '2025-01-15',
             estado: 'Pendiente',
-            periodoConcat: 'dic-2024'
+            empresa: 'Empresa ABC',
+            responsable: 'RRHH',
+            notas: 'Incluir nuevos empleados',
+            fecha_presentacion: '2025-01-15',
+            monto: '3200',
+            observaciones: 'Verificar planilla'
         },
         {
             rowIndex: 5,
-            empresa: 'Comercial GHI S.R.L.',
-            abreviatura: 'GHI',
-            responsable: 'Ana López',
+            abreviatura: 'SUNAT-PDT',
             entidad: 'SUNAT',
-            obligacion: 'PDT 621',
-            periodo: 'nov',
-            ano: '2024',
-            fechaLimite: '2025-01-17',
+            obligacion: 'Presentación de PDT 621',
+            periodo: '2024-12',
+            fecha_limite: '2025-01-17',
             estado: 'Completado',
-            periodoConcat: 'nov-2024'
+            empresa: 'Empresa ABC',
+            responsable: 'Contador',
+            notas: 'Presentado correctamente',
+            fecha_presentacion: '2025-01-16',
+            monto: '2500',
+            observaciones: 'Sin observaciones'
         },
         {
             rowIndex: 6,
-            empresa: 'Distribuidora JKL S.A.C.',
-            abreviatura: 'JKL',
-            responsable: 'Roberto Silva',
-            entidad: 'Municipalidad de Lima',
-            obligacion: 'Licencia de Funcionamiento',
-            periodo: 'anual',
-            ano: '2024',
-            fechaLimite: '2025-01-20',
+            abreviatura: 'MUN-LIC',
+            entidad: 'Municipalidad',
+            obligacion: 'Renovación de licencia municipal',
+            periodo: '2025',
+            fecha_limite: '2025-01-20',
             estado: 'Vencido',
-            periodoConcat: 'anual-2024'
+            empresa: 'Empresa ABC',
+            responsable: 'Legal',
+            notas: 'Pendiente de documentos',
+            fecha_presentacion: '2025-01-20',
+            monto: '850',
+            observaciones: 'Crítico - requiere atención inmediata'
         }
     ];
-
-    // Apply company filtering for demo data if user is logged in
-    if (appState.currentUser) {
-        if (appState.currentUser.rol === 'Administrador') {
-            appState.data = allDemoData;
-        } else {
-            const userCompanies = parseUserCompanies(appState.currentUser.empresas);
-            appState.data = filterDataByCompanies(allDemoData, userCompanies);
-        }
-    } else {
-        appState.data = allDemoData;
-    }
 
     appState.filteredData = [...appState.data];
     initializeInterface();
@@ -750,35 +793,112 @@ function loadDemoData() {
     appState.setLoading(false);
 }
 
-// Initialize interface components
 function initializeInterface() {
     setupFilters();
+    setupYearFilter();
     renderTable();
     setupCalendar();
     updateStats();
+    setupTableFeatures();
+    setupStatFilters();
 }
 
-// Setup filters
 function setupFilters() {
+    const empresas = new Set();
     const entities = new Set();
-    const types = new Set();
+    const responsables = new Set();
+    const obligaciones = new Set();
     const statuses = new Set();
 
     appState.data.forEach(item => {
+        if (item.empresa) empresas.add(item.empresa);
         if (item.entidad) entities.add(item.entidad);
-        if (item.obligacion) types.add(item.obligacion);
+        if (item.responsable) responsables.add(item.responsable);
+        if (item.obligacion) obligaciones.add(item.obligacion);
         if (item.estado) statuses.add(item.estado);
     });
 
+    createFilterCheckboxes('empresaFilters', empresas, 'empresas');
     createFilterCheckboxes('entityFilters', entities, 'entities');
-    createFilterCheckboxes('typeFilters', types, 'types');
+    createFilterCheckboxes('responsableFilters', responsables, 'responsables');
+    createFilterCheckboxes('obligacionFilters', obligaciones, 'obligaciones');
     createFilterCheckboxes('statusFilters', statuses, 'statuses');
 
     setupFilterSearch();
     setupFilterActions();
 }
 
-// Create filter checkboxes
+function setupYearFilter() {
+    const yearFilter = document.getElementById('yearFilter');
+    const monthFilter = document.getElementById('monthFilter');
+
+    if (!yearFilter || !monthFilter) return;
+
+    // Populate year filter with years from data
+    const years = new Set();
+    appState.data.forEach(item => {
+        if (item.fecha_limite) {
+            const year = new Date(item.fecha_limite).getFullYear();
+            if (!isNaN(year)) years.add(year);
+        }
+    });
+
+    Array.from(years).sort().forEach(year => {
+        const option = document.createElement('option');
+        option.value = year;
+        option.textContent = year;
+        yearFilter.appendChild(option);
+    });
+
+    // Add event listeners for date filtering
+    yearFilter.addEventListener('change', applyDateFilter);
+    monthFilter.addEventListener('change', applyDateFilter);
+}
+
+function applyDateFilter() {
+    const yearFilter = document.getElementById('yearFilter');
+    const monthFilter = document.getElementById('monthFilter');
+
+    if (!yearFilter || !monthFilter) return;
+
+    const selectedYear = yearFilter.value;
+    const selectedMonth = monthFilter.value;
+
+    if (!selectedYear && !selectedMonth) {
+        // No date filter applied
+        applyFilters();
+        return;
+    }
+
+    // Apply date filter to current filtered data
+    let dateFilteredData = appState.filteredData;
+
+    if (selectedYear || selectedMonth) {
+        dateFilteredData = appState.filteredData.filter(item => {
+            if (!item.fecha_limite) return false;
+            
+            const itemDate = new Date(item.fecha_limite);
+            if (isNaN(itemDate)) return false;
+
+            let matches = true;
+            
+            if (selectedYear) {
+                matches = matches && itemDate.getFullYear() === parseInt(selectedYear);
+            }
+            
+            if (selectedMonth) {
+                matches = matches && (itemDate.getMonth() + 1) === parseInt(selectedMonth);
+            }
+
+            return matches;
+        });
+    }
+
+    // Update table with date filtered data
+    renderTableWithData(dateFilteredData);
+    AlertManager.info(`${dateFilteredData.length} registros después del filtro de fecha`);
+}
+
 function createFilterCheckboxes(containerId, items, filterType) {
     const container = document.getElementById(containerId);
     if (!container) return;
@@ -788,9 +908,10 @@ function createFilterCheckboxes(containerId, items, filterType) {
     Array.from(items).sort().forEach(item => {
         const div = document.createElement('div');
         div.className = 'filter-checkbox';
+        const safeId = `${filterType}_${item.replace(/[^a-zA-Z0-9]/g, '_')}`;
         div.innerHTML = `
-            <input type="checkbox" id="${filterType}_${item.replace(/\s+/g, '_')}" value="${item}" checked>
-            <label for="${filterType}_${item.replace(/\s+/g, '_')}">${item}</label>
+            <input type="checkbox" id="${safeId}" value="${item}" checked>
+            <label for="${safeId}">${item}</label>
         `;
         
         const checkbox = div.querySelector('input');
@@ -800,20 +921,22 @@ function createFilterCheckboxes(containerId, items, filterType) {
     });
 }
 
-// Setup filter search
 function setupFilterSearch() {
-    const entitySearch = document.getElementById('entitySearch');
-    const typeSearch = document.getElementById('typeSearch');
+    const searchInputs = [
+        { id: 'empresaSearch', container: 'empresaFilters' },
+        { id: 'entitySearch', container: 'entityFilters' },
+        { id: 'responsableSearch', container: 'responsableFilters' },
+        { id: 'obligacionSearch', container: 'obligacionFilters' }
+    ];
 
-    if (entitySearch) {
-        entitySearch.addEventListener('input', (e) => filterCheckboxes('entityFilters', e.target.value));
-    }
-    if (typeSearch) {
-        typeSearch.addEventListener('input', (e) => filterCheckboxes('typeFilters', e.target.value));
-    }
+    searchInputs.forEach(({id, container}) => {
+        const input = document.getElementById(id);
+        if (input) {
+            input.addEventListener('input', (e) => filterCheckboxes(container, e.target.value));
+        }
+    });
 }
 
-// Filter checkboxes based on search
 function filterCheckboxes(containerId, searchTerm) {
     const container = document.getElementById(containerId);
     if (!container) return;
@@ -827,80 +950,142 @@ function filterCheckboxes(containerId, searchTerm) {
     });
 }
 
-// Setup filter actions
 function setupFilterActions() {
     const clearBtn = document.getElementById('clearFilters');
     const applyBtn = document.getElementById('applyFilters');
 
-    if (clearBtn) {
-        clearBtn.addEventListener('click', clearFilters);
-    }
-    if (applyBtn) {
-        applyBtn.addEventListener('click', applyFilters);
-    }
+    if (clearBtn) clearBtn.addEventListener('click', clearFilters);
+    if (applyBtn) applyBtn.addEventListener('click', applyFilters);
 }
 
-// Clear all filters
 function clearFilters() {
+    // Clear all checkboxes
     document.querySelectorAll('.filter-checkbox input[type="checkbox"]').forEach(checkbox => {
         checkbox.checked = true;
     });
+    
+    // Clear search inputs
     document.querySelectorAll('.filter-search').forEach(search => {
         search.value = '';
     });
     
+    // Clear date filters
+    const yearFilter = document.getElementById('yearFilter');
+    const monthFilter = document.getElementById('monthFilter');
+    if (yearFilter) yearFilter.value = '';
+    if (monthFilter) monthFilter.value = '';
+    
+    // Reset filter visibility
     document.querySelectorAll('.filter-checkbox').forEach(checkbox => {
         checkbox.style.display = 'flex';
+    });
+    
+    // Clear active stat filter
+    appState.activeStatFilter = null;
+    document.querySelectorAll('.stat-button').forEach(btn => {
+        btn.classList.remove('active');
     });
     
     applyFilters();
 }
 
-// Apply filters
 function applyFilters() {
+    const selectedEmpresas = getSelectedFilters('empresas');
     const selectedEntities = getSelectedFilters('entities');
-    const selectedTypes = getSelectedFilters('types');
+    const selectedResponsables = getSelectedFilters('responsables');
+    const selectedObligaciones = getSelectedFilters('obligaciones');
     const selectedStatuses = getSelectedFilters('statuses');
 
     appState.filteredData = appState.data.filter(item => {
-        return selectedEntities.has(item.entidad) &&
-               selectedTypes.has(item.obligacion) &&
-               selectedStatuses.has(item.estado);
+        let matches = selectedEmpresas.has(item.empresa) &&
+                     selectedEntities.has(item.entidad) &&
+                     selectedResponsables.has(item.responsable) &&
+                     selectedObligaciones.has(item.obligacion) &&
+                     selectedStatuses.has(item.estado);
+
+        // Apply stat filter if active
+        if (appState.activeStatFilter) {
+            matches = matches && applyStatFilter(item, appState.activeStatFilter);
+        }
+
+        return matches;
     });
 
     renderTable();
     updateCalendar();
     updateStats();
-    
-    AlertManager.info(`${appState.filteredData.length} registros después del filtro`);
+    applyDateFilter(); // Apply date filter after regular filters
 }
 
-// Get selected filters
 function getSelectedFilters(filterType) {
     const selected = new Set();
-    document.querySelectorAll(`input[id^="${filterType}_"]:checked`).forEach(checkbox => {
+    document.querySelectorAll(`input[id*="${filterType}_"]:checked`).forEach(checkbox => {
         selected.add(checkbox.value);
     });
     return selected;
 }
 
-// Render table
+function setupStatFilters() {
+    const statButtons = document.querySelectorAll('.stat-button');
+    statButtons.forEach(button => {
+        button.addEventListener('click', (e) => {
+            const filterType = e.currentTarget.dataset.filter;
+            
+            // Toggle active state
+            if (appState.activeStatFilter === filterType) {
+                appState.activeStatFilter = null;
+                button.classList.remove('active');
+            } else {
+                document.querySelectorAll('.stat-button').forEach(btn => btn.classList.remove('active'));
+                appState.activeStatFilter = filterType;
+                button.classList.add('active');
+            }
+            
+            applyFilters();
+        });
+    });
+}
+
+function applyStatFilter(item, filterType) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    switch (filterType) {
+        case 'upcoming':
+            if (!item.fecha_limite || item.estado === 'Completado') return false;
+            const dueDate = new Date(item.fecha_limite);
+            const diffTime = dueDate - today;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            return diffDays >= 0 && diffDays <= 7;
+            
+        case 'overdue':
+            if (!item.fecha_limite || item.estado === 'Completado') return false;
+            return new Date(item.fecha_limite) < today;
+            
+        case 'total':
+        default:
+            return true;
+    }
+}
+
 function renderTable() {
+    renderTableWithData(appState.filteredData);
+}
+
+function renderTableWithData(data) {
     const tbody = document.getElementById('tableBody');
     if (!tbody) return;
     
     tbody.innerHTML = '';
 
-    appState.filteredData.forEach(item => {
+    data.forEach(item => {
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>${item.empresa}</td>
             <td>${item.abreviatura}</td>
-            <td>${item.responsable}</td>
             <td>${item.entidad}</td>
             <td>${item.obligacion}</td>
-            <td>${item.periodoConcat}</td>
-            <td>${formatDate(item.fechaLimite)}</td>
+            <td>${item.periodo}</td>
+            <td>${formatDate(item.fecha_limite)}</td>
             <td class="status-cell">
                 <span class="status status--${getStatusClass(item.estado)}">${item.estado}</span>
             </td>
@@ -914,7 +1099,6 @@ function renderTable() {
     });
 }
 
-// Format date for display
 function formatDate(dateString) {
     if (!dateString) return '';
     try {
@@ -925,7 +1109,6 @@ function formatDate(dateString) {
     }
 }
 
-// Get status CSS class
 function getStatusClass(status) {
     switch (status?.toLowerCase()) {
         case 'completado': return 'success';
@@ -935,7 +1118,6 @@ function getStatusClass(status) {
     }
 }
 
-// Setup calendar
 function setupCalendar() {
     const calendarEl = document.getElementById('calendar');
     if (!calendarEl || typeof FullCalendar === 'undefined') return;
@@ -963,7 +1145,6 @@ function setupCalendar() {
     appState.calendar.render();
 }
 
-// Update calendar
 function updateCalendar() {
     if (appState.calendar) {
         appState.calendar.removeAllEvents();
@@ -971,23 +1152,19 @@ function updateCalendar() {
     }
 }
 
-// Get calendar events
 function getCalendarEvents() {
     return appState.filteredData.map(item => ({
-        title: `${item.entidad} - ${item.obligacion}`,
-        date: item.fechaLimite,
+        title: `${item.abreviatura} – ${item.entidad} – ${item.obligacion}`,
+        date: item.fecha_limite,
         color: getEventColor(item.estado),
         extendedProps: {
             rowIndex: item.rowIndex,
             description: item.obligacion,
-            status: item.estado,
-            empresa: item.empresa,
-            periodo: item.periodoConcat
+            status: item.estado
         }
     }));
 }
 
-// Get event color based on status
 function getEventColor(status) {
     switch (status?.toLowerCase()) {
         case 'completado': return '#21805C';
@@ -997,7 +1174,6 @@ function getEventColor(status) {
     }
 }
 
-// Update stats
 function updateStats() {
     const totalEl = document.getElementById('totalCount');
     const upcomingEl = document.getElementById('upcomingCount');
@@ -1010,17 +1186,17 @@ function updateStats() {
     today.setHours(0, 0, 0, 0);
     
     const upcoming = appState.filteredData.filter(item => {
-        if (!item.fechaLimite) return false;
-        const dueDate = new Date(item.fechaLimite);
+        if (!item.fecha_limite || item.estado === 'Completado') return false;
+        const dueDate = new Date(item.fecha_limite);
         const diffTime = dueDate - today;
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        return diffDays >= 0 && diffDays <= 7 && item.estado !== 'Completado';
+        return diffDays >= 0 && diffDays <= 7;
     }).length;
     
     const overdue = appState.filteredData.filter(item => {
-        if (!item.fechaLimite) return false;
-        const dueDate = new Date(item.fechaLimite);
-        return dueDate < today && item.estado !== 'Completado';
+        if (!item.fecha_limite || item.estado === 'Completado') return false;
+        const dueDate = new Date(item.fecha_limite);
+        return dueDate < today;
     }).length;
 
     totalEl.textContent = total;
@@ -1028,7 +1204,174 @@ function updateStats() {
     overdueEl.textContent = overdue;
 }
 
-// Edit record
+function setupTableFeatures() {
+    setupColumnSorting();
+    setupColumnResizing();
+    setupColumnReordering();
+}
+
+function setupColumnSorting() {
+    const sortableHeaders = document.querySelectorAll('.sortable');
+    sortableHeaders.forEach(header => {
+        header.addEventListener('click', (e) => {
+            if (e.target.classList.contains('resize-handle')) return;
+            
+            const column = header.dataset.column;
+            const currentSort = appState.sortConfig.find(s => s.column === column);
+            
+            if (e.ctrlKey || e.metaKey) {
+                // Multi-column sort
+                if (currentSort) {
+                    currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+                } else {
+                    appState.sortConfig.push({ column, direction: 'asc' });
+                }
+            } else {
+                // Single column sort
+                appState.sortConfig = currentSort && currentSort.direction === 'asc' 
+                    ? [{ column, direction: 'desc' }]
+                    : [{ column, direction: 'asc' }];
+            }
+            
+            updateSortIndicators();
+            sortData();
+        });
+    });
+}
+
+function updateSortIndicators() {
+    document.querySelectorAll('.sortable').forEach(header => {
+        header.classList.remove('sort-asc', 'sort-desc');
+        const column = header.dataset.column;
+        const sort = appState.sortConfig.find(s => s.column === column);
+        if (sort) {
+            header.classList.add(`sort-${sort.direction}`);
+        }
+    });
+}
+
+function sortData() {
+    if (appState.sortConfig.length === 0) return;
+    
+    appState.filteredData.sort((a, b) => {
+        for (const sort of appState.sortConfig) {
+            const valueA = a[sort.column] || '';
+            const valueB = b[sort.column] || '';
+            
+            let comparison = 0;
+            
+            // Special handling for dates
+            if (sort.column.includes('fecha')) {
+                const dateA = new Date(valueA);
+                const dateB = new Date(valueB);
+                comparison = dateA - dateB;
+            } else {
+                comparison = valueA.toString().localeCompare(valueB.toString());
+            }
+            
+            if (comparison !== 0) {
+                return sort.direction === 'asc' ? comparison : -comparison;
+            }
+        }
+        return 0;
+    });
+    
+    renderTable();
+}
+
+function setupColumnResizing() {
+    const resizeHandles = document.querySelectorAll('.resize-handle');
+    let isResizing = false;
+    let currentHandle = null;
+    let startX = 0;
+    let startWidth = 0;
+
+    resizeHandles.forEach(handle => {
+        handle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            currentHandle = handle;
+            startX = e.clientX;
+            const th = handle.closest('th');
+            startWidth = th.offsetWidth;
+            e.preventDefault();
+        });
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+        
+        const th = currentHandle.closest('th');
+        const newWidth = startWidth + (e.clientX - startX);
+        if (newWidth > 50) { // Minimum width
+            th.style.width = newWidth + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        isResizing = false;
+        currentHandle = null;
+    });
+}
+
+function setupColumnReordering() {
+    const headerRow = document.getElementById('headerRow');
+    if (!headerRow) return;
+
+    let draggedColumn = null;
+
+    headerRow.addEventListener('dragstart', (e) => {
+        if (e.target.tagName === 'TH' && !e.target.classList.contains('no-sort')) {
+            draggedColumn = e.target;
+            e.target.classList.add('dragging');
+        }
+    });
+
+    headerRow.addEventListener('dragover', (e) => {
+        e.preventDefault();
+    });
+
+    headerRow.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const targetColumn = e.target.closest('th');
+        
+        if (draggedColumn && targetColumn && draggedColumn !== targetColumn) {
+            const draggedIndex = Array.from(headerRow.children).indexOf(draggedColumn);
+            const targetIndex = Array.from(headerRow.children).indexOf(targetColumn);
+            
+            // Reorder columns in DOM
+            if (draggedIndex < targetIndex) {
+                targetColumn.parentNode.insertBefore(draggedColumn, targetColumn.nextSibling);
+            } else {
+                targetColumn.parentNode.insertBefore(draggedColumn, targetColumn);
+            }
+            
+            // Update column order in state
+            const draggedColumnKey = draggedColumn.dataset.column;
+            const targetColumnKey = targetColumn.dataset.column;
+            
+            const draggedOrderIndex = appState.columnOrder.indexOf(draggedColumnKey);
+            const targetOrderIndex = appState.columnOrder.indexOf(targetColumnKey);
+            
+            appState.columnOrder.splice(draggedOrderIndex, 1);
+            appState.columnOrder.splice(targetOrderIndex, 0, draggedColumnKey);
+            
+            // Re-render table to match new order
+            renderTable();
+        }
+        
+        if (draggedColumn) {
+            draggedColumn.classList.remove('dragging');
+            draggedColumn = null;
+        }
+    });
+
+    // Make headers draggable
+    document.querySelectorAll('#headerRow th:not(.no-sort)').forEach(th => {
+        th.draggable = true;
+    });
+}
+
+// Make editRecord globally accessible
 window.editRecord = function(rowIndex) {
     const record = appState.data.find(item => item.rowIndex === rowIndex);
     if (!record) {
@@ -1038,81 +1381,59 @@ window.editRecord = function(rowIndex) {
 
     appState.currentEditingRow = rowIndex;
     
-    document.getElementById('editEmpresa').value = record.empresa || '';
-    document.getElementById('editAbreviatura').value = record.abreviatura || '';
-    document.getElementById('editResponsable').value = record.responsable || '';
-    document.getElementById('editEntidad').value = record.entidad || '';
-    document.getElementById('editObligacion').value = record.obligacion || '';
-    document.getElementById('editPeriodo').value = record.periodoConcat || '';
-    document.getElementById('editFechaLimite').value = record.fechaLimite || '';
-    document.getElementById('editEstado').value = record.estado || 'Pendiente';
+    // Populate modal with read-only fields
+    const abrevInput = document.getElementById('editAbreviatura');
+    const entityInput = document.getElementById('editEntity');
+    const obligacionInput = document.getElementById('editObligacion');
+    const periodoInput = document.getElementById('editPeriodo');
+    const fechaInput = document.getElementById('editFechaLimite');
+    const statusInput = document.getElementById('editStatus');
+    
+    if (abrevInput) abrevInput.value = record.abreviatura || '';
+    if (entityInput) entityInput.value = record.entidad || '';
+    if (obligacionInput) obligacionInput.value = record.obligacion || '';
+    if (periodoInput) periodoInput.value = record.periodo || '';
+    if (fechaInput) fechaInput.value = record.fecha_limite || '';
+    if (statusInput) statusInput.value = record.estado || 'Pendiente';
 
+    // Show modal
     const modal = document.getElementById('editModal');
-    if (modal) modal.classList.remove('hidden');
+    if (modal) {
+        modal.classList.remove('hidden');
+    }
 };
 
-// Setup modals
-function setupModals() {
-    console.log('Setting up modals...');
-    
-    // Login modal
-    const loginModal = document.getElementById('loginModal');
-    const closeLoginBtn = document.getElementById('closeLoginModal');
-    const cancelLoginBtn = document.getElementById('cancelLogin');
-    const loginForm = document.getElementById('loginForm');
-
-    if (closeLoginBtn) {
-        closeLoginBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            closeLoginModal();
-        });
-    }
-    if (cancelLoginBtn) {
-        cancelLoginBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            closeLoginModal();
-        });
-    }
-    if (loginForm) {
-        loginForm.addEventListener('submit', handleLogin);
-    }
-    
-    if (loginModal) {
-        loginModal.addEventListener('click', (e) => {
-            if (e.target === loginModal || e.target.classList.contains('modal-overlay')) {
-                closeLoginModal();
-            }
-        });
-    }
-
-    // Edit modal
-    const editModal = document.getElementById('editModal');
+function setupModal() {
+    const modal = document.getElementById('editModal');
     const closeBtn = document.getElementById('closeModal');
     const cancelBtn = document.getElementById('cancelEdit');
     const form = document.getElementById('editForm');
 
-    if (closeBtn) closeBtn.addEventListener('click', closeModal);
-    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+    if (closeBtn) {
+        closeBtn.addEventListener('click', closeModal);
+    }
     
-    if (editModal) {
-        editModal.addEventListener('click', (e) => {
-            if (e.target === editModal) closeModal();
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', closeModal);
+    }
+    
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeModal();
         });
     }
 
-    if (form) form.addEventListener('submit', saveRecord);
-    
-    console.log('Modals setup complete');
+    if (form) {
+        form.addEventListener('submit', saveRecord);
+    }
 }
 
-// Close edit modal
 function closeModal() {
     const modal = document.getElementById('editModal');
     if (modal) modal.classList.add('hidden');
     appState.currentEditingRow = null;
 }
 
-// Save record
 async function saveRecord(e) {
     e.preventDefault();
     
@@ -1124,31 +1445,26 @@ async function saveRecord(e) {
     try {
         appState.setLoading(true);
 
-        const periodoConcat = document.getElementById('editPeriodo')?.value || '';
-        const { periodo, ano } = splitPeriodoConcat(periodoConcat);
+        const fechaInput = document.getElementById('editFechaLimite');
+        const statusInput = document.getElementById('editStatus');
 
         const updatedData = {
-            empresa: document.getElementById('editEmpresa')?.value || '',
-            abreviatura: document.getElementById('editAbreviatura')?.value || '',
-            responsable: document.getElementById('editResponsable')?.value || '',
-            entidad: document.getElementById('editEntidad')?.value || '',
-            obligacion: document.getElementById('editObligacion')?.value || '',
-            periodo: periodo,
-            ano: ano,
-            fechaLimite: document.getElementById('editFechaLimite')?.value || '',
-            estado: document.getElementById('editEstado')?.value || 'Pendiente',
-            periodoConcat: periodoConcat
+            fecha_limite: fechaInput ? fechaInput.value : '',
+            estado: statusInput ? statusInput.value : 'Pendiente'
         };
 
+        // Update local data
         const recordIndex = appState.data.findIndex(item => item.rowIndex === appState.currentEditingRow);
         if (recordIndex !== -1) {
             Object.assign(appState.data[recordIndex], updatedData);
         }
 
+        // Save to Google Sheets if connected
         if (appState.isSignedIn) {
-            await safeGoogleSheetsUpdate(appState.currentEditingRow, updatedData);
+            await safeGoogleSheetsUpdate(appState.currentEditingRow, appState.data[recordIndex]);
         }
 
+        // Update filtered data
         const filteredIndex = appState.filteredData.findIndex(item => item.rowIndex === appState.currentEditingRow);
         if (filteredIndex !== -1) {
             Object.assign(appState.filteredData[filteredIndex], updatedData);
@@ -1169,26 +1485,17 @@ async function saveRecord(e) {
     }
 }
 
-// Safe Google Sheets update with error handling
 async function safeGoogleSheetsUpdate(rowIndex, data) {
     try {
         const values = [
-            [
-                data.empresa,        // Column A
-                data.abreviatura,    // Column B  
-                data.responsable,    // Column C
-                data.entidad,        // Column D
-                data.obligacion,     // Column E
-                data.periodo,        // Column F
-                data.ano,            // Column G
-                data.fechaLimite,    // Column H
-                data.estado          // Column I
-            ]
+            [data.abreviatura, data.entidad, data.obligacion, data.periodo, 
+             data.fecha_limite, data.estado, data.empresa, data.responsable,
+             data.notas, data.fecha_presentacion, data.monto, data.observaciones]
         ];
 
         await gapi.client.sheets.spreadsheets.values.update({
             spreadsheetId: CONFIG.SPREADSHEET_ID,
-            range: `DATA!A${rowIndex}:I${rowIndex}`,
+            range: `Sheet1!A${rowIndex}:L${rowIndex}`,
             valueInputOption: 'USER_ENTERED',
             resource: { values }
         });
@@ -1201,7 +1508,6 @@ async function safeGoogleSheetsUpdate(rowIndex, data) {
     }
 }
 
-// Clear all data
 function clearAllData() {
     appState.data = [];
     appState.filteredData = [];
@@ -1216,31 +1522,20 @@ function clearAllData() {
     updateStats();
 }
 
+// Make alarmManager available globally for onclick handlers
+window.alarmManager = alarmManager;
+
 // Initialize app when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM loaded, initializing app...');
     
     appState.setLoading(false);
-    setupModals();
+    setupModal();
+    alarmManager.init();
     loadDemoData();
     
+    // Initialize Google APIs in background
     setTimeout(() => {
         initializeGoogleAPIs();
     }, 500);
 });
-
-// Add CSS for slideOut animation
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideOut {
-        from {
-            transform: translateX(0);
-            opacity: 1;
-        }
-        to {
-            transform: translateX(100%);
-            opacity: 0;
-        }
-    }
-`;
-document.head.appendChild(style);

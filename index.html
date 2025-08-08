@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Calendario Fiscal - Obligaciones Tributarias</title>
     
-    <!-- FullCalendar CSS - Using unpkg to avoid MIME type issues -->
+    <!-- FullCalendar CSS -->
     <link href="https://unpkg.com/fullcalendar@6.1.10/index.global.min.css" rel="stylesheet">
     
     <!-- Custom CSS -->
@@ -29,11 +29,12 @@
             <div class="header-content">
                 <h1>Calendario Fiscal</h1>
                 <div class="header-actions">
+                    <button id="alarmManagementBtn" class="btn btn--outline">
+                        🔔 Gestión de Alarmas
+                    </button>
                     <button id="authBtn" class="btn btn--primary">
                         <span id="authText">Conectar a Google</span>
                     </button>
-                    <button id="loginBtn" class="btn btn--outline hidden">Iniciar Sesión</button>
-                    <span id="userInfo" class="user-info hidden"></span>
                     <button id="signoutBtn" class="btn btn--outline hidden">Cerrar Sesión</button>
                 </div>
             </div>
@@ -58,6 +59,13 @@
                         <h3>Filtros</h3>
                         <div class="filters-grid">
                             <div class="filter-group">
+                                <label class="form-label">Empresa</label>
+                                <div class="filter-container">
+                                    <input type="text" id="empresaSearch" class="form-control filter-search" placeholder="Buscar empresa...">
+                                    <div id="empresaFilters" class="filter-checkboxes"></div>
+                                </div>
+                            </div>
+                            <div class="filter-group">
                                 <label class="form-label">Entidad</label>
                                 <div class="filter-container">
                                     <input type="text" id="entitySearch" class="form-control filter-search" placeholder="Buscar entidad...">
@@ -65,10 +73,17 @@
                                 </div>
                             </div>
                             <div class="filter-group">
-                                <label class="form-label">Tipo de Obligación</label>
+                                <label class="form-label">Responsable</label>
                                 <div class="filter-container">
-                                    <input type="text" id="typeSearch" class="form-control filter-search" placeholder="Buscar tipo...">
-                                    <div id="typeFilters" class="filter-checkboxes"></div>
+                                    <input type="text" id="responsableSearch" class="form-control filter-search" placeholder="Buscar responsable...">
+                                    <div id="responsableFilters" class="filter-checkboxes"></div>
+                                </div>
+                            </div>
+                            <div class="filter-group">
+                                <label class="form-label">Obligación</label>
+                                <div class="filter-container">
+                                    <input type="text" id="obligacionSearch" class="form-control filter-search" placeholder="Buscar obligación...">
+                                    <div id="obligacionFilters" class="filter-checkboxes"></div>
                                 </div>
                             </div>
                             <div class="filter-group">
@@ -93,18 +108,18 @@
                         <div class="calendar-header">
                             <h3>Calendario de Vencimientos</h3>
                             <div class="calendar-stats">
-                                <span class="stat">
+                                <button class="stat stat-button" id="totalStat" data-filter="total">
                                     <span class="stat-label">Total:</span>
                                     <span id="totalCount" class="stat-value">0</span>
-                                </span>
-                                <span class="stat">
+                                </button>
+                                <button class="stat stat-button" id="upcomingStat" data-filter="upcoming">
                                     <span class="stat-label">Próximos:</span>
                                     <span id="upcomingCount" class="stat-value">0</span>
-                                </span>
-                                <span class="stat">
+                                </button>
+                                <button class="stat stat-button" id="overdueStat" data-filter="overdue">
                                     <span class="stat-label">Vencidos:</span>
                                     <span id="overdueCount" class="stat-value">0</span>
-                                </span>
+                                </button>
                             </div>
                         </div>
                         <div id="calendar"></div>
@@ -116,20 +131,79 @@
             <section class="table-section">
                 <div class="card">
                     <div class="card__body">
-                        <h3>Obligaciones Tributarias</h3>
-                        <div class="table-container">
+                        <div class="table-header">
+                            <h3>Obligaciones Tributarias</h3>
+                            <div class="date-filter-bar">
+                                <label class="form-label">Filtro por fecha:</label>
+                                <div class="date-filters">
+                                    <select id="yearFilter" class="form-control form-control--sm">
+                                        <option value="">Todos los años</option>
+                                    </select>
+                                    <select id="monthFilter" class="form-control form-control--sm">
+                                        <option value="">Todos los meses</option>
+                                        <option value="01">Enero</option>
+                                        <option value="02">Febrero</option>
+                                        <option value="03">Marzo</option>
+                                        <option value="04">Abril</option>
+                                        <option value="05">Mayo</option>
+                                        <option value="06">Junio</option>
+                                        <option value="07">Julio</option>
+                                        <option value="08">Agosto</option>
+                                        <option value="09">Septiembre</option>
+                                        <option value="10">Octubre</option>
+                                        <option value="11">Noviembre</option>
+                                        <option value="12">Diciembre</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="table-container" id="tableContainer">
                             <table id="obligationsTable" class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Empresa</th>
-                                        <th>Abreviatura</th>
-                                        <th>Responsable</th>
-                                        <th>Entidad</th>
-                                        <th>Tipo de Obligación</th>
-                                        <th>Período</th>
-                                        <th>Fecha Límite</th>
-                                        <th>Estado</th>
-                                        <th>Acciones</th>
+                                <thead id="tableHeader">
+                                    <tr id="headerRow">
+                                        <th class="sortable resizable" data-column="abreviatura">
+                                            <div class="th-content">
+                                                <span>Abreviatura</span>
+                                                <span class="sort-indicator"></span>
+                                                <div class="resize-handle"></div>
+                                            </div>
+                                        </th>
+                                        <th class="sortable resizable" data-column="entidad">
+                                            <div class="th-content">
+                                                <span>Entidad</span>
+                                                <span class="sort-indicator"></span>
+                                                <div class="resize-handle"></div>
+                                            </div>
+                                        </th>
+                                        <th class="sortable resizable" data-column="obligacion">
+                                            <div class="th-content">
+                                                <span>Obligación</span>
+                                                <span class="sort-indicator"></span>
+                                                <div class="resize-handle"></div>
+                                            </div>
+                                        </th>
+                                        <th class="sortable resizable" data-column="periodo">
+                                            <div class="th-content">
+                                                <span>Período</span>
+                                                <span class="sort-indicator"></span>
+                                                <div class="resize-handle"></div>
+                                            </div>
+                                        </th>
+                                        <th class="sortable resizable" data-column="fecha_limite">
+                                            <div class="th-content">
+                                                <span>Fecha Límite</span>
+                                                <span class="sort-indicator"></span>
+                                                <div class="resize-handle"></div>
+                                            </div>
+                                        </th>
+                                        <th class="sortable resizable" data-column="estado">
+                                            <div class="th-content">
+                                                <span>Estado</span>
+                                                <span class="sort-indicator"></span>
+                                                <div class="resize-handle"></div>
+                                            </div>
+                                        </th>
+                                        <th class="no-sort">Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody id="tableBody">
@@ -143,36 +217,6 @@
         </div>
     </main>
 
-    <!-- Login Modal -->
-    <div id="loginModal" class="modal hidden">
-        <div class="modal-overlay">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h4>Iniciar Sesión</h4>
-                    <button id="closeLoginModal" class="modal-close">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <form id="loginForm">
-                        <div class="form-group">
-                            <label class="form-label">Usuario</label>
-                            <select id="loginUsuario" class="form-control" required>
-                                <option value="">Seleccionar usuario...</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Contraseña</label>
-                            <input type="password" id="loginContrasena" class="form-control" required>
-                        </div>
-                    </form>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" id="cancelLogin" class="btn btn--outline">Cancelar</button>
-                    <button type="submit" form="loginForm" id="submitLogin" class="btn btn--primary">Iniciar Sesión</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- Edit Modal -->
     <div id="editModal" class="modal hidden">
         <div class="modal-overlay">
@@ -183,42 +227,36 @@
                 </div>
                 <div class="modal-body">
                     <form id="editForm">
-                        <div class="form-group">
-                            <label class="form-label">Empresa</label>
-                            <input type="text" id="editEmpresa" class="form-control" required>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Abreviatura</label>
-                            <input type="text" id="editAbreviatura" class="form-control" required>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Responsable</label>
-                            <input type="text" id="editResponsable" class="form-control" required>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Entidad</label>
-                            <input type="text" id="editEntidad" class="form-control" required>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Tipo de Obligación</label>
-                            <input type="text" id="editObligacion" class="form-control" required>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Período</label>
-                            <input type="text" id="editPeriodo" class="form-control" placeholder="ej: ene-feb-2025" required>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Fecha Límite Presentación</label>
-                            <input type="date" id="editFechaLimite" class="form-control" required>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Estado</label>
-                            <select id="editEstado" class="form-control" required>
-                                <option value="Pendiente">Pendiente</option>
-                                <option value="Completado">Completado</option>
-                                <option value="Vencido">Vencido</option>
-                                <option value="En Proceso">En Proceso</option>
-                            </select>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label class="form-label">Abreviatura</label>
+                                <input type="text" id="editAbreviatura" class="form-control" readonly>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Entidad</label>
+                                <input type="text" id="editEntity" class="form-control" readonly>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Obligación</label>
+                                <textarea id="editObligacion" class="form-control" rows="2" readonly></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Período</label>
+                                <input type="text" id="editPeriodo" class="form-control" readonly>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Fecha Límite</label>
+                                <input type="date" id="editFechaLimite" class="form-control" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Estado</label>
+                                <select id="editStatus" class="form-control" required>
+                                    <option value="Pendiente">Pendiente</option>
+                                    <option value="Completado">Completado</option>
+                                    <option value="Vencido">Vencido</option>
+                                    <option value="En Proceso">En Proceso</option>
+                                </select>
+                            </div>
                         </div>
                     </form>
                 </div>
@@ -230,10 +268,92 @@
         </div>
     </div>
 
+    <!-- Alarm Management Modal -->
+    <div id="alarmModal" class="modal hidden">
+        <div class="modal-overlay">
+            <div class="modal-content modal-content--large">
+                <div class="modal-header">
+                    <h4>Gestión de Alarmas</h4>
+                    <button id="closeAlarmModal" class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="alarm-tabs">
+                        <button class="alarm-tab active" data-tab="create">Crear Alarma</button>
+                        <button class="alarm-tab" data-tab="list">Lista de Alarmas</button>
+                    </div>
+                    
+                    <!-- Create Alarm Tab -->
+                    <div id="createAlarmTab" class="alarm-tab-content active">
+                        <form id="alarmForm">
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label class="form-label">Entidad</label>
+                                    <select id="alarmEntity" class="form-control" required>
+                                        <option value="">Seleccionar entidad</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Obligación</label>
+                                    <select id="alarmObligacion" class="form-control" required>
+                                        <option value="">Seleccionar obligación</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Días antes del vencimiento</label>
+                                    <input type="number" id="alarmDaysBefore" class="form-control" min="1" max="365" value="8" required>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Frecuencia (días)</label>
+                                    <input type="number" id="alarmFrequency" class="form-control" min="1" max="30" value="2" required>
+                                </div>
+                                <div class="form-group form-group--full">
+                                    <label class="form-label">Correos electrónicos</label>
+                                    <div class="email-input-container">
+                                        <input type="email" id="emailInput" class="form-control" placeholder="Ingrese correo electrónico">
+                                        <button type="button" id="addEmailBtn" class="btn btn--outline">Agregar</button>
+                                    </div>
+                                    <div id="emailList" class="email-list"></div>
+                                </div>
+                                <div class="form-group form-group--full">
+                                    <label class="form-label">Mensaje personalizado</label>
+                                    <textarea id="alarmMessage" class="form-control" rows="4" placeholder="Mensaje predeterminado que será enviado con la alarma...">Estimado/a,
+
+Le recordamos que se aproxima el vencimiento de la siguiente obligación:
+
+{Entidad}: {Obligación}
+Fecha límite: {Fecha}
+
+Por favor, tome las medidas necesarias para cumplir con esta obligación a tiempo.
+
+Saludos cordiales.</textarea>
+                                </div>
+                            </div>
+                            <div class="form-actions">
+                                <button type="button" id="testAlarmBtn" class="btn btn--outline">Probar Alarma</button>
+                                <button type="submit" class="btn btn--primary">Crear Alarma</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Alarm List Tab -->
+                    <div id="listAlarmTab" class="alarm-tab-content">
+                        <div class="alarm-list-header">
+                            <h5>Alarmas Activas</h5>
+                            <span id="alarmCount" class="badge">0</span>
+                        </div>
+                        <div id="alarmList" class="alarm-list">
+                            <!-- Alarms will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Alert Container -->
     <div id="alertContainer" class="alert-container"></div>
 
-    <!-- Scripts - Load Google APIs first, then FullCalendar, then our app -->
+    <!-- Scripts -->
     <script src="https://apis.google.com/js/api.js" async defer></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://unpkg.com/fullcalendar@6.1.10/index.global.min.js"></script>

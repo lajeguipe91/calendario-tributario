@@ -6,7 +6,7 @@
     <title>Calendario Fiscal - Obligaciones Tributarias</title>
     
     <!-- FullCalendar CSS -->
-    <link href="https://unpkg.com/fullcalendar@6.1.10/index.global.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/main.min.css" rel="stylesheet">
     
     <!-- Custom CSS -->
     <link rel="stylesheet" href="style.css">
@@ -17,7 +17,7 @@
         <div class="container">
             <div class="status-content">
                 <span id="statusIcon" class="status-icon">⚠️</span>
-                <span id="statusText">Conectando a Google Sheets...</span>
+                <span id="statusText">Conectando a Supabase...</span>
                 <button id="retryBtn" class="btn btn--sm btn--outline hidden">Reintentar</button>
             </div>
         </div>
@@ -29,20 +29,24 @@
             <div class="header-content">
                 <h1>Calendario Fiscal</h1>
                 <div class="header-actions">
-                    <button id="alarmManagementBtn" class="btn btn--outline">
-                        🔔 Gestión de Alarmas
+                    <button id="addRecordBtn" class="btn btn--primary">
+                        ➕ Agregar Registro
                     </button>
-                    <button id="authBtn" class="btn btn--primary">
-                        <span id="authText">Conectar a Google</span>
+                    <button id="importCsvBtn" class="btn btn--outline">
+                        ⬆️ Importar CSV
                     </button>
-                    <button id="signoutBtn" class="btn btn--outline hidden">Cerrar Sesión</button>
+                    <input type="file" id="csvFileInput" accept=".csv" class="hidden">
+                    <button id="exportBtn" class="btn btn--outline">
+                        📥 Exportar a Excel
+                    </button>
+                    <button id="signoutBtn" class="btn btn--outline hidden">Desconectar</button>
                 </div>
             </div>
         </div>
     </header>
 
     <!-- Loading Overlay -->
-    <div id="loadingOverlay" class="loading-overlay">
+    <div id="loadingOverlay" class="loading-overlay hidden">
         <div class="loading-content">
             <div class="loading-spinner"></div>
             <p>Cargando datos fiscales...</p>
@@ -56,7 +60,10 @@
             <section class="filters-section">
                 <div class="card">
                     <div class="card__body">
-                        <h3>Filtros</h3>
+                        <div class="card-header">
+                            <h3>Filtros</h3>
+                            <button id="toggleFiltersBtn" class="btn btn--sm btn--outline">Mostrar</button>
+                        </div>
                         <div class="filters-grid">
                             <div class="filter-group">
                                 <label class="form-label">Empresa</label>
@@ -157,10 +164,21 @@
                                 </div>
                             </div>
                         </div>
+                        <!-- Bulk Actions -->
+                        <div id="bulk-actions-container" class="bulk-actions hidden">
+                            <label for="bulk-status-select">Cambiar estado a:</label>
+                            <select id="bulk-status-select" class="form-control form-control--sm">
+                                <option value="Pendiente">Pendiente</option>
+                                <option value="Presentado">Presentado</option>
+                                <option value="No Aplica">No Aplica</option>
+                            </select>
+                            <button id="bulk-update-btn" class="btn btn--primary btn--sm">Actualizar Seleccionados</button>
+                        </div>
                         <div class="table-container" id="tableContainer">
                             <table id="obligationsTable" class="data-table">
                                 <thead id="tableHeader">
                                     <tr id="headerRow">
+                                        <th class="no-sort"><input type="checkbox" id="selectAllRows"></th>
                                         <th class="sortable resizable" data-column="abreviatura">
                                             <div class="th-content">
                                                 <span>Abreviatura</span>
@@ -204,6 +222,7 @@
                                             </div>
                                         </th>
                                         <th class="no-sort">Acciones</th>
+                                        <th class="no-sort"></th>
                                     </tr>
                                 </thead>
                                 <tbody id="tableBody">
@@ -252,9 +271,8 @@
                                 <label class="form-label">Estado</label>
                                 <select id="editStatus" class="form-control" required>
                                     <option value="Pendiente">Pendiente</option>
-                                    <option value="Completado">Completado</option>
-                                    <option value="Vencido">Vencido</option>
-                                    <option value="En Proceso">En Proceso</option>
+                                    <option value="Presentado">Presentado</option>
+                                    <option value="No Aplica">No Aplica</option>
                                 </select>
                             </div>
                         </div>
@@ -268,95 +286,75 @@
         </div>
     </div>
 
-    <!-- Alarm Management Modal -->
-    <div id="alarmModal" class="modal hidden">
+    <!-- Add Record Modal -->
+    <div id="addRecordModal" class="modal hidden">
         <div class="modal-overlay">
-            <div class="modal-content modal-content--large">
+            <div class="modal-content">
                 <div class="modal-header">
-                    <h4>Gestión de Alarmas</h4>
-                    <button id="closeAlarmModal" class="modal-close">&times;</button>
+                    <h4>Agregar Registro</h4>
+                    <button id="closeAddModal" class="modal-close">&times;</button>
                 </div>
                 <div class="modal-body">
-                    <div class="alarm-tabs">
-                        <button class="alarm-tab active" data-tab="create">Crear Alarma</button>
-                        <button class="alarm-tab" data-tab="list">Lista de Alarmas</button>
-                    </div>
-                    
-                    <!-- Create Alarm Tab -->
-                    <div id="createAlarmTab" class="alarm-tab-content active">
-                        <form id="alarmForm">
-                            <div class="form-grid">
-                                <div class="form-group">
-                                    <label class="form-label">Entidad</label>
-                                    <select id="alarmEntity" class="form-control" required>
-                                        <option value="">Seleccionar entidad</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Obligación</label>
-                                    <select id="alarmObligacion" class="form-control" required>
-                                        <option value="">Seleccionar obligación</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Días antes del vencimiento</label>
-                                    <input type="number" id="alarmDaysBefore" class="form-control" min="1" max="365" value="8" required>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Frecuencia (días)</label>
-                                    <input type="number" id="alarmFrequency" class="form-control" min="1" max="30" value="2" required>
-                                </div>
-                                <div class="form-group form-group--full">
-                                    <label class="form-label">Correos electrónicos</label>
-                                    <div class="email-input-container">
-                                        <input type="email" id="emailInput" class="form-control" placeholder="Ingrese correo electrónico">
-                                        <button type="button" id="addEmailBtn" class="btn btn--outline">Agregar</button>
-                                    </div>
-                                    <div id="emailList" class="email-list"></div>
-                                </div>
-                                <div class="form-group form-group--full">
-                                    <label class="form-label">Mensaje personalizado</label>
-                                    <textarea id="alarmMessage" class="form-control" rows="4" placeholder="Mensaje predeterminado que será enviado con la alarma...">Estimado/a,
-
-Le recordamos que se aproxima el vencimiento de la siguiente obligación:
-
-{Entidad}: {Obligación}
-Fecha límite: {Fecha}
-
-Por favor, tome las medidas necesarias para cumplir con esta obligación a tiempo.
-
-Saludos cordiales.</textarea>
-                                </div>
+                    <form id="addRecordForm">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label class="form-label">Abreviatura</label>
+                                <input type="text" id="addAbreviatura" class="form-control" required>
                             </div>
-                            <div class="form-actions">
-                                <button type="button" id="testAlarmBtn" class="btn btn--outline">Probar Alarma</button>
-                                <button type="submit" class="btn btn--primary">Crear Alarma</button>
+                            <div class="form-group">
+                                <label class="form-label">Empresa</label>
+                                <input type="text" id="addEmpresa" class="form-control" required>
                             </div>
-                        </form>
-                    </div>
-
-                    <!-- Alarm List Tab -->
-                    <div id="listAlarmTab" class="alarm-tab-content">
-                        <div class="alarm-list-header">
-                            <h5>Alarmas Activas</h5>
-                            <span id="alarmCount" class="badge">0</span>
+                            <div class="form-group">
+                                <label class="form-label">Entidad</label>
+                                <input type="text" id="addEntity" class="form-control" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Responsable</label>
+                                <input type="text" id="addResponsable" class="form-control" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Obligación</label>
+                                <textarea id="addObligacion" class="form-control" rows="2" required></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Período</label>
+                                <input type="text" id="addPeriodo" class="form-control" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Fecha Límite</label>
+                                <input type="date" id="addFechaLimite" class="form-control" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Estado</label>
+                                <select id="addStatus" class="form-control" required>
+                                    <option value="Pendiente">Pendiente</option>
+                                    <option value="Presentado">Presentado</option>
+                                    <option value="No Aplica">No Aplica</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <input type="checkbox" id="addPredeterminado" class="form-check-input">
+                                <label class="form-check-label" for="addPredeterminado">Predeterminado</label>
+                            </div>
                         </div>
-                        <div id="alarmList" class="alarm-list">
-                            <!-- Alarms will be populated here -->
-                        </div>
-                    </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" id="cancelAdd" class="btn btn--outline">Cancelar</button>
+                    <button type="submit" form="addRecordForm" id="saveAdd" class="btn btn--primary">Guardar</button>
                 </div>
             </div>
         </div>
     </div>
+    
 
     <!-- Alert Container -->
     <div id="alertContainer" class="alert-container"></div>
 
     <!-- Scripts -->
-    <script src="https://apis.google.com/js/api.js" async defer></script>
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://unpkg.com/fullcalendar@6.1.10/index.global.min.js"></script>
-    <script src="app.js" defer></script>
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+    <script type="module" src="app.js"></script>
 </body>
 </html>

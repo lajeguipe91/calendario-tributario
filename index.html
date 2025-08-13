@@ -39,6 +39,9 @@
                     <button id="exportBtn" class="btn btn--outline">
                         📥 Exportar a Excel
                     </button>
+                    <button id="refreshBtn" class="btn btn--outline">
+                        🔄 Actualizar Datos
+                    </button>
                     <button id="signoutBtn" class="btn btn--outline hidden">Desconectar</button>
                 </div>
             </div>
@@ -173,6 +176,7 @@
                                 <option value="No Aplica">No Aplica</option>
                             </select>
                             <button id="bulk-update-btn" class="btn btn--primary btn--sm">Actualizar Seleccionados</button>
+                            <button id="bulk-edit-btn" class="btn btn--secondary btn--sm">Editar Seleccionados</button>
                         </div>
                         <div class="table-container" id="tableContainer">
                             <table id="obligationsTable" class="data-table">
@@ -299,27 +303,33 @@
                         <div class="form-grid">
                             <div class="form-group">
                                 <label class="form-label">Abreviatura</label>
-                                <input type="text" id="addAbreviatura" class="form-control" required>
+                                <input type="text" id="addAbreviatura" class="form-control" required list="abreviatura-list">
+                                <datalist id="abreviatura-list"></datalist>
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Empresa</label>
-                                <input type="text" id="addEmpresa" class="form-control" required>
+                                <input type="text" id="addEmpresa" class="form-control" required list="empresa-list">
+                                <datalist id="empresa-list"></datalist>
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Entidad</label>
-                                <input type="text" id="addEntity" class="form-control" required>
+                                <input type="text" id="addEntity" class="form-control" required list="entidad-list">
+                                <datalist id="entidad-list"></datalist>
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Responsable</label>
-                                <input type="text" id="addResponsable" class="form-control" required>
+                                <input type="text" id="addResponsable" class="form-control" required list="responsable-list">
+                                <datalist id="responsable-list"></datalist>
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Obligación</label>
-                                <textarea id="addObligacion" class="form-control" rows="2" required></textarea>
+                                <input id="addObligacion" class="form-control" required list="obligacion-list"></input>
+                                <datalist id="obligacion-list"></datalist>
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Período</label>
-                                <input type="text" id="addPeriodo" class="form-control" required>
+                                <input type="text" id="addPeriodo" class="form-control" required list="periodo-list">
+                                <datalist id="periodo-list"></datalist>
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Fecha Límite</label>
@@ -333,16 +343,71 @@
                                     <option value="No Aplica">No Aplica</option>
                                 </select>
                             </div>
-                            <div class="form-group">
-                                <input type="checkbox" id="addPredeterminado" class="form-check-input">
-                                <label class="form-check-label" for="addPredeterminado">Predeterminado</label>
-                            </div>
                         </div>
                     </form>
                 </div>
                 <div class="modal-footer">
                     <button type="button" id="cancelAdd" class="btn btn--outline">Cancelar</button>
                     <button type="submit" form="addRecordForm" id="saveAdd" class="btn btn--primary">Guardar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bulk Edit Modal -->
+    <div id="bulkEditModal" class="modal hidden">
+        <div class="modal-overlay">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4>Editar Registros Seleccionados</h4>
+                    <button id="closeBulkEditModal" class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="bulkEditForm">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label class="form-label">Abreviatura</label>
+                                <input type="text" id="bulkEditAbreviatura" class="form-control" list="abreviatura-list">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Empresa</label>
+                                <input type="text" id="bulkEditEmpresa" class="form-control" list="empresa-list">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Entidad</label>
+                                <input type="text" id="bulkEditEntity" class="form-control" list="entidad-list">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Responsable</label>
+                                <input type="text" id="bulkEditResponsable" class="form-control" list="responsable-list">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Obligación</label>
+                                <input id="bulkEditObligacion" class="form-control" list="obligacion-list"></input>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Período</label>
+                                <input type="text" id="bulkEditPeriodo" class="form-control" list="periodo-list">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Fecha Límite</label>
+                                <input type="date" id="bulkEditFechaLimite" class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Estado</label>
+                                <select id="bulkEditStatus" class="form-control">
+                                    <option value="">-- Sin Cambios --</option>
+                                    <option value="Pendiente">Pendiente</option>
+                                    <option value="Presentado">Presentado</option>
+                                    <option value="No Aplica">No Aplica</option>
+                                </select>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" id="cancelBulkEdit" class="btn btn--outline">Cancelar</button>
+                    <button type="submit" form="bulkEditForm" id="saveBulkEdit" class="btn btn--primary">Guardar Cambios</button>
                 </div>
             </div>
         </div>

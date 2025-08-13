@@ -117,13 +117,22 @@ function setupStaticEventListeners() {
 
     // Bulk actions
     document.getElementById('bulk-update-btn')?.addEventListener('click', handleBulkUpdate);
+    document.getElementById('bulk-edit-btn')?.addEventListener('click', handleBulkEdit);
 
     // Export button
     document.getElementById('exportBtn')?.addEventListener('click', exportToExcel);
 
+    // Refresh button
+    document.getElementById('refreshBtn')?.addEventListener('click', loadSupabaseData);
+
     // Import CSV
     document.getElementById('importCsvBtn')?.addEventListener('click', () => document.getElementById('csvFileInput').click());
     document.getElementById('csvFileInput')?.addEventListener('change', handleCsvFileSelect);
+
+    // Bulk Edit Modal
+    document.getElementById('closeBulkEditModal')?.addEventListener('click', closeBulkEditModal);
+    document.getElementById('cancelBulkEdit')?.addEventListener('click', closeBulkEditModal);
+    document.getElementById('bulkEditForm')?.addEventListener('submit', saveBulkEdit);
 }
 
 async function initializeSupabase() {
@@ -423,6 +432,80 @@ async function handleBulkUpdate() {
     }
 }
 
+function handleBulkEdit() {
+    const password = prompt('Por favor, ingrese la contraseña para editar en bloque:');
+    if (password === 'Monserrat') {
+        openBulkEditModal();
+    } else {
+        AlertManager.error('Contraseña incorrecta.');
+    }
+}
+
+function openBulkEditModal() {
+    document.getElementById('bulkEditModal').classList.remove('hidden');
+}
+
+function closeBulkEditModal() {
+    document.getElementById('bulkEditModal').classList.add('hidden');
+    document.getElementById('bulkEditForm').reset();
+}
+
+async function saveBulkEdit(e) {
+    e.preventDefault();
+
+    const idsToUpdate = Array.from(appState.selectedRows);
+    if (idsToUpdate.length === 0) {
+        return AlertManager.warning('No hay filas seleccionadas para editar.');
+    }
+
+    const updatedData = {};
+    const abreviatura = document.getElementById('bulkEditAbreviatura').value;
+    if (abreviatura) updatedData.abreviatura = abreviatura;
+
+    const empresa = document.getElementById('bulkEditEmpresa').value;
+    if (empresa) updatedData.empresa = empresa;
+
+    const entidad = document.getElementById('bulkEditEntity').value;
+    if (entidad) updatedData.entidad = entidad;
+
+    const responsable = document.getElementById('bulkEditResponsable').value;
+    if (responsable) updatedData.responsable = responsable;
+
+    const obligacion = document.getElementById('bulkEditObligacion').value;
+    if (obligacion) updatedData.obligacion = obligacion;
+
+    const periodo = document.getElementById('bulkEditPeriodo').value;
+    if (periodo) updatedData.periodo = periodo;
+
+    const fecha_limite = document.getElementById('bulkEditFechaLimite').value;
+    if (fecha_limite) updatedData.fecha_limite = fecha_limite;
+
+    const estado = document.getElementById('bulkEditStatus').value;
+    if (estado) updatedData.estado = estado;
+
+    if (Object.keys(updatedData).length === 0) {
+        return AlertManager.info('No se han realizado cambios.');
+    }
+
+    appState.setLoading(true);
+    try {
+        const { error } = await supabase.from(CONFIG.TABLE_NAME).update(updatedData).in('id', idsToUpdate);
+        if (error) throw error;
+
+        await loadSupabaseData();
+        closeBulkEditModal();
+        AlertManager.success(`${idsToUpdate.length} registros actualizados exitosamente.`);
+
+    } catch (error) {
+        console.error('Error during bulk edit:', error);
+        AlertManager.error(`Error al actualizar: ${error.message}`);
+    } finally {
+        appState.setLoading(false);
+        appState.selectedRows.clear();
+        document.getElementById('selectAllRows').checked = false;
+    }
+}
+
 // Other functions (Calendar, Stats, etc. - minor changes for new flow)
 function setupCalendar() {
     const calendarEl = document.getElementById('calendar');
@@ -647,7 +730,32 @@ function handleFilterSearch(e) {
 }
 
 function openAddRecordModal() {
+    populateDatalists();
     document.getElementById('addRecordModal').classList.remove('hidden');
+}
+
+function populateDatalists() {
+    const fields = {
+        'abreviatura': 'abreviatura-list',
+        'empresa': 'empresa-list',
+        'entidad': 'entidad-list',
+        'responsable': 'responsable-list',
+        'obligacion': 'obligacion-list',
+        'periodo': 'periodo-list'
+    };
+
+    for (const [field, datalistId] of Object.entries(fields)) {
+        const datalist = document.getElementById(datalistId);
+        if (datalist) {
+            const options = [...new Set(appState.data.map(item => item[field]).filter(Boolean))];
+            datalist.innerHTML = '';
+            options.forEach(option => {
+                const optionElement = document.createElement('option');
+                optionElement.value = option;
+                datalist.appendChild(optionElement);
+            });
+        }
+    }
 }
 
 function closeAddRecordModal() {
@@ -666,8 +774,7 @@ async function saveNewRecord(e) {
         obligacion: document.getElementById('addObligacion').value,
         periodo: document.getElementById('addPeriodo').value,
         fecha_limite: document.getElementById('addFechaLimite').value,
-        estado: document.getElementById('addStatus').value,
-        predeterminado: document.getElementById('addPredeterminado').checked,
+        estado: document.getElementById('addStatus').value
     };
 
     appState.setLoading(true);

@@ -1992,8 +1992,29 @@ select.form-control {
 }
 
 .filters-section.collapsed .filters-grid,
-.filters-section.collapsed .filter-actions {
+.filters-section.collapsed .filter-actions,
+.table-section.collapsed .collapsible-content {
     display: none;
+}
+
+.collapsible-content {
+    transition: max-height 0.3s ease-out, opacity 0.3s ease-out, visibility 0.3s ease-out;
+}
+
+#calendar {
+    max-height: 600px;
+    overflow-y: auto;
+}
+    overflow: hidden;
+    max-height: 0; /* Hidden by default */
+    opacity: 0;    /* Hidden by default */
+    visibility: hidden; /* Hidden by default */
+}
+
+section:not(.collapsed) .collapsible-content {
+    max-height: 1000px; /* A large enough value to show content */
+    opacity: 1;
+    visibility: visible;
 }
 
 /* Filters Section */
@@ -2795,43 +2816,39 @@ select.form-control {
   }
 }
 
-/* Bulk Actions Toolbar */
-.bulk-actions {
-    position: sticky;
-    bottom: 0;
-    background-color: var(--color-primary);
-    color: var(--color-btn-primary-text);
-    padding: var(--space-12) var(--space-16);
-    border-radius: var(--radius-md) var(--radius-md) 0 0;
-    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.15);
+.kpi-container {
     display: flex;
     align-items: center;
-    gap: var(--space-16);
-    transform: translateY(100%);
-    transition: transform 0.3s var(--ease-standard);
-    z-index: 50;
 }
 
-.bulk-actions:not(.hidden) {
-    transform: translateY(0);
+.kpi-info {
+    position: relative;
+    display: inline-block;
+    margin-left: 20px; /* 5 spaces separation */
 }
 
-.bulk-actions label {
-    font-weight: var(--font-weight-medium);
+.info-icon {
+    cursor: pointer;
 }
 
-.bulk-actions .form-control--sm {
-    background-color: var(--color-surface);
-    color: var(--color-text);
-    border-color: var(--color-border);
+.tooltip {
+    visibility: hidden;
+    width: 220px;
+    background-color: #555;
+    color: #fff;
+    text-align: center;
+    border-radius: 6px;
+    padding: 5px 0;
+    position: absolute;
+    z-index: 1;
+    bottom: 125%;
+    left: 50%;
+    margin-left: -110px;
+    opacity: 0;
+    transition: opacity 0.3s;
 }
 
-.bulk-actions .btn--primary {
-    background-color: var(--color-surface);
-    color: var(--color-primary);
-    border: 1px solid var(--color-primary);
-}
-
-.bulk-actions .btn--primary:hover {
-    background-color: var(--color-secondary);
+.kpi-info:hover .tooltip {
+    visibility: visible;
+    opacity: 1;
 }

@@ -6,7 +6,7 @@
     <title>Calendario Fiscal - Obligaciones Tributarias</title>
     
     <!-- FullCalendar CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/main.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/main.css" rel="stylesheet">
     
     <!-- Custom CSS -->
     <link rel="stylesheet" href="style.css">
@@ -59,15 +59,44 @@
     <!-- Main Content -->
     <main class="main-content">
         <div class="container">
+            <!-- Calendar Section -->
+            <section class="calendar-section">
+                <div class="card">
+                    <div class="card__body">
+                        <div class="card-header">
+                            <h3>Calendario de Vencimientos</h3>
+                            <button class="btn btn--sm btn--outline toggle-section-btn">Ocultar</button>
+                        </div>
+                        <div class="collapsible-content">
+                            <div class="calendar-stats">
+                                <button class="stat stat-button" id="totalStat" data-filter="total">
+                                    <span class="stat-label">Total:</span>
+                                    <span id="totalCount" class="stat-value">0</span>
+                                </button>
+                                <button class="stat stat-button" id="upcomingStat" data-filter="upcoming">
+                                    <span class="stat-label">Próximos:</span>
+                                    <span id="upcomingCount" class="stat-value">0</span>
+                                </button>
+                                <button class="stat stat-button" id="overdueStat" data-filter="overdue">
+                                    <span class="stat-label">Vencidos:</span>
+                                    <span id="overdueCount" class="stat-value">0</span>
+                                </button>
+                            </div>
+                            <div id="calendar"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Filters Section -->
-            <section class="filters-section">
+            <section class="filters-section collapsed">
                 <div class="card">
                     <div class="card__body">
                         <div class="card-header">
                             <h3>Filtros</h3>
-                            <button id="toggleFiltersBtn" class="btn btn--sm btn--outline">Mostrar</button>
+                            <button id="toggleFiltersBtn" class="btn btn--sm btn--outline toggle-section-btn">Mostrar</button>
                         </div>
-                        <div class="filters-grid">
+                        <div class="filters-grid collapsible-content">
                             <div class="filter-group">
                                 <label class="form-label">Empresa</label>
                                 <div class="filter-container">
@@ -111,128 +140,143 @@
                 </div>
             </section>
 
-            <!-- Calendar Section -->
-            <section class="calendar-section">
+            <!-- Data Table Section -->
+            <section class="table-section collapsed">
                 <div class="card">
                     <div class="card__body">
-                        <div class="calendar-header">
-                            <h3>Calendario de Vencimientos</h3>
-                            <div class="calendar-stats">
-                                <button class="stat stat-button" id="totalStat" data-filter="total">
-                                    <span class="stat-label">Total:</span>
-                                    <span id="totalCount" class="stat-value">0</span>
-                                </button>
-                                <button class="stat stat-button" id="upcomingStat" data-filter="upcoming">
-                                    <span class="stat-label">Próximos:</span>
-                                    <span id="upcomingCount" class="stat-value">0</span>
-                                </button>
-                                <button class="stat stat-button" id="overdueStat" data-filter="overdue">
-                                    <span class="stat-label">Vencidos:</span>
-                                    <span id="overdueCount" class="stat-value">0</span>
-                                </button>
+                        <div class="card-header">
+                            <h3>Obligaciones Tributarias</h3>
+                            <button class="btn btn--sm btn--outline toggle-section-btn">Mostrar</button>
+                        </div>
+                        <div class="collapsible-content">
+                            <div class="table-header">
+                                <div class="date-filter-bar">
+                                    <label class="form-label">Filtro por fecha:</label>
+                                    <div class="date-filters">
+                                        <select id="yearFilter" class="form-control form-control--sm">
+                                            <option value="">Todos los años</option>
+                                        </select>
+                                        <select id="monthFilter" class="form-control form-control--sm">
+                                            <option value="">Todos los meses</option>
+                                            <option value="01">Enero</option>
+                                            <option value="02">Febrero</option>
+                                            <option value="03">Marzo</option>
+                                            <option value="04">Abril</option>
+                                            <option value="05">Mayo</option>
+                                            <option value="06">Junio</option>
+                                            <option value="07">Julio</option>
+                                            <option value="08">Agosto</option>
+                                            <option value="09">Septiembre</option>
+                                            <option value="10">Octubre</option>
+                                            <option value="11">Noviembre</option>
+                                            <option value="12">Diciembre</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Bulk Actions -->
+                            <div id="bulk-actions-container" class="bulk-actions hidden">
+                                <label for="bulk-status-select">Cambiar estado a:</label>
+                                <select id="bulk-status-select" class="form-control form-control--sm">
+                                    <option value="Pendiente">Pendiente</option>
+                                    <option value="Presentado">Presentado</option>
+                                    <option value="No Aplica">No Aplica</option>
+                                </select>
+                                <button id="bulk-update-btn" class="btn btn--primary btn--sm">Actualizar Seleccionados</button>
+                                <button id="bulk-edit-btn" class="btn btn--secondary btn--sm">Editar Seleccionados</button>
+                            </div>
+                            <div class="table-container" id="tableContainer">
+                                <table id="obligationsTable" class="data-table">
+                                    <thead id="tableHeader">
+                                        <tr id="headerRow">
+                                            <th class="no-sort"><input type="checkbox" id="selectAllRows"></th>
+                                            <th class="sortable resizable" data-column="abreviatura">
+                                                <div class="th-content">
+                                                    <span>Abreviatura</span>
+                                                    <span class="sort-indicator"></span>
+                                                    <div class="resize-handle"></div>
+                                                </div>
+                                            </th>
+                                            <th class="sortable resizable" data-column="entidad">
+                                                <div class="th-content">
+                                                    <span>Entidad</span>
+                                                    <span class="sort-indicator"></span>
+                                                    <div class="resize-handle"></div>
+                                                </div>
+                                            </th>
+                                            <th class="sortable resizable" data-column="obligacion">
+                                                <div class="th-content">
+                                                    <span>Obligación</span>
+                                                    <span class="sort-indicator"></span>
+                                                    <div class="resize-handle"></div>
+                                                </div>
+                                            </th>
+                                            <th class="sortable resizable" data-column="periodo">
+                                                <div class="th-content">
+                                                    <span>Período</span>
+                                                    <span class="sort-indicator"></span>
+                                                    <div class="resize-handle"></div>
+                                                </div>
+                                            </th>
+                                            <th class="sortable resizable" data-column="fecha_limite">
+                                                <div class="th-content">
+                                                    <span>Fecha Límite</span>
+                                                    <span class="sort-indicator"></span>
+                                                    <div class="resize-handle"></div>
+                                                </div>
+                                            </th>
+                                            <th class="sortable resizable" data-column="estado">
+                                                <div class="th-content">
+                                                    <span>Estado</span>
+                                                    <span class="sort-indicator"></span>
+                                                    <div class="resize-handle"></div>
+                                                </div>
+                                            </th>
+                                            <th class="no-sort">Acciones</th>
+                                            <th class="no-sort"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tableBody">
+                                        <!-- Data will be populated here -->
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
-                        <div id="calendar"></div>
                     </div>
                 </div>
             </section>
 
-            <!-- Data Table Section -->
-            <section class="table-section">
+            <!-- Dashboard Section -->
+            <section class="dashboard-section">
                 <div class="card">
                     <div class="card__body">
-                        <div class="table-header">
-                            <h3>Obligaciones Tributarias</h3>
-                            <div class="date-filter-bar">
-                                <label class="form-label">Filtro por fecha:</label>
-                                <div class="date-filters">
-                                    <select id="yearFilter" class="form-control form-control--sm">
-                                        <option value="">Todos los años</option>
-                                    </select>
-                                    <select id="monthFilter" class="form-control form-control--sm">
-                                        <option value="">Todos los meses</option>
-                                        <option value="01">Enero</option>
-                                        <option value="02">Febrero</option>
-                                        <option value="03">Marzo</option>
-                                        <option value="04">Abril</option>
-                                        <option value="05">Mayo</option>
-                                        <option value="06">Junio</option>
-                                        <option value="07">Julio</option>
-                                        <option value="08">Agosto</option>
-                                        <option value="09">Septiembre</option>
-                                        <option value="10">Octubre</option>
-                                        <option value="11">Noviembre</option>
-                                        <option value="12">Diciembre</option>
-                                    </select>
+                        <div class="card-header">
+                            <h3>Dashboard de Cumplimiento</h3>
+                            <button class="btn btn--sm btn--outline toggle-section-btn">Ocultar</button>
+                        </div>
+                        <div class="dashboard-grid collapsible-content">
+                            <div style="display: flex; flex-wrap: wrap; justify-content: space-between;">
+                                <div class="dashboard-item" style="width: 60%;">
+                                    <h4>Obligaciones por Abreviatura</h4>
+                                    <canvas id="abreviaturaChart"></canvas>
+                                </div>
+                                <div class="dashboard-item" style="width: 35%;">
+                                    <h4>Estado de Obligaciones</h4>
+                                    <canvas id="estadoChart" style="max-height: 200px;"></canvas>
                                 </div>
                             </div>
-                        </div>
-                        <!-- Bulk Actions -->
-                        <div id="bulk-actions-container" class="bulk-actions hidden">
-                            <label for="bulk-status-select">Cambiar estado a:</label>
-                            <select id="bulk-status-select" class="form-control form-control--sm">
-                                <option value="Pendiente">Pendiente</option>
-                                <option value="Presentado">Presentado</option>
-                                <option value="No Aplica">No Aplica</option>
-                            </select>
-                            <button id="bulk-update-btn" class="btn btn--primary btn--sm">Actualizar Seleccionados</button>
-                            <button id="bulk-edit-btn" class="btn btn--secondary btn--sm">Editar Seleccionados</button>
-                        </div>
-                        <div class="table-container" id="tableContainer">
-                            <table id="obligationsTable" class="data-table">
-                                <thead id="tableHeader">
-                                    <tr id="headerRow">
-                                        <th class="no-sort"><input type="checkbox" id="selectAllRows"></th>
-                                        <th class="sortable resizable" data-column="abreviatura">
-                                            <div class="th-content">
-                                                <span>Abreviatura</span>
-                                                <span class="sort-indicator"></span>
-                                                <div class="resize-handle"></div>
-                                            </div>
-                                        </th>
-                                        <th class="sortable resizable" data-column="entidad">
-                                            <div class="th-content">
-                                                <span>Entidad</span>
-                                                <span class="sort-indicator"></span>
-                                                <div class="resize-handle"></div>
-                                            </div>
-                                        </th>
-                                        <th class="sortable resizable" data-column="obligacion">
-                                            <div class="th-content">
-                                                <span>Obligación</span>
-                                                <span class="sort-indicator"></span>
-                                                <div class="resize-handle"></div>
-                                            </div>
-                                        </th>
-                                        <th class="sortable resizable" data-column="periodo">
-                                            <div class="th-content">
-                                                <span>Período</span>
-                                                <span class="sort-indicator"></span>
-                                                <div class="resize-handle"></div>
-                                            </div>
-                                        </th>
-                                        <th class="sortable resizable" data-column="fecha_limite">
-                                            <div class="th-content">
-                                                <span>Fecha Límite</span>
-                                                <span class="sort-indicator"></span>
-                                                <div class="resize-handle"></div>
-                                            </div>
-                                        </th>
-                                        <th class="sortable resizable" data-column="estado">
-                                            <div class="th-content">
-                                                <span>Estado</span>
-                                                <span class="sort-indicator"></span>
-                                                <div class="resize-handle"></div>
-                                            </div>
-                                        </th>
-                                        <th class="no-sort">Acciones</th>
-                                        <th class="no-sort"></th>
-                                    </tr>
-                                </thead>
-                                <tbody id="tableBody">
-                                    <!-- Data will be populated here -->
-                                </tbody>
-                            </table>
+                            <div id="responsable-legend" class="chart-legend"></div>
+                            <div class="dashboard-item" style="width: 100%;">
+                                <h4>KPI de Cumplimiento</h4>
+                                <div id="kpi-container" class="kpi-container">
+                                    <div class="kpi-value" id="complianceKpi">0%</div>
+                                    <div class="kpi-label">Cumplimiento General</div>
+                                    <div class="kpi-info">
+                                        <span class="info-icon">ℹ️</span>
+                                        <div class="tooltip">El KPI de cumplimiento se calcula como (Obligaciones Presentadas / Total de Obligaciones Vencidas que no aplican) * 100</div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -418,8 +462,9 @@
     <div id="alertContainer" class="alert-container"></div>
 
     <!-- Scripts -->
-    <script src="https://unpkg.com/fullcalendar@6.1.10/index.global.min.js"></script>
-    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
-    <script type="module" src="app.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
+    <script src="https://unpkg.com/fullcalendar@6.1.10/index.global.min.js" defer></script>
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js" defer></script>
+    <script type="module" src="app.js" defer></script>
 </body>
 </html>

@@ -107,7 +107,7 @@ function setupStaticEventListeners() {
     // Filter actions
     document.getElementById('applyFilters')?.addEventListener('click', applyFiltersAndRender);
     document.getElementById('clearFilters')?.addEventListener('click', clearFilters);
-    document.getElementById('toggleFiltersBtn')?.addEventListener('click', toggleFilters);
+    
 
     // Add Record Modal
     document.getElementById('addRecordBtn')?.addEventListener('click', openAddRecordModal);
@@ -126,7 +126,14 @@ function setupStaticEventListeners() {
     document.getElementById('refreshBtn')?.addEventListener('click', loadSupabaseData);
 
     // Import CSV
-    document.getElementById('importCsvBtn')?.addEventListener('click', () => document.getElementById('csvFileInput').click());
+    document.getElementById('importCsvBtn')?.addEventListener('click', () => {
+        const password = prompt('Por favor, ingrese la contraseña para importar un CSV:');
+        if (password === 'Monserrat') {
+            document.getElementById('csvFileInput').click();
+        } else {
+            AlertManager.error('Contraseña incorrecta.');
+        }
+    });
     document.getElementById('csvFileInput')?.addEventListener('change', handleCsvFileSelect);
 
     // Bulk Edit Modal
@@ -190,6 +197,17 @@ function initializeDynamicInterface() {
     setupDynamicEventListeners();
     applyFiltersAndRender();
     setupCalendar();
+    // Collapse sections by default
+    document.querySelector('.filters-section').classList.add('collapsed');
+    document.querySelector('.table-section').classList.add('collapsed');
+    document.querySelectorAll('.toggle-section-btn').forEach(btn => {
+        const section = btn.closest('section');
+        if (section.classList.contains('collapsed')) {
+            btn.textContent = 'Mostrar';
+        } else {
+            btn.textContent = 'Ocultar';
+        }
+    });
 }
 
 function setupDynamicEventListeners() {
@@ -202,6 +220,20 @@ function setupDynamicEventListeners() {
     document.getElementById('monthFilter')?.addEventListener('change', applyFiltersAndRender);
     document.querySelectorAll('.stat-button').forEach(btn => btn.addEventListener('click', handleStatClick));
     document.querySelectorAll('.filter-search').forEach(input => input.addEventListener('input', handleFilterSearch));
+    document.querySelectorAll('.toggle-section-btn').forEach(btn => {
+        btn.addEventListener('click', toggleSection);
+    });
+}
+
+function toggleSection(e) {
+    console.log('toggleSection called');
+    const section = e.target.closest('section');
+    console.log('Section before toggle:', section.classList.contains('collapsed'));
+    section.classList.toggle('collapsed');
+    const isCollapsed = section.classList.contains('collapsed');
+    console.log('Section after toggle:', isCollapsed);
+    e.target.textContent = isCollapsed ? 'Mostrar' : 'Ocultar';
+    console.log('Button text changed to:', e.target.textContent);
 }
 
 function handleFilterChange(e) {
@@ -281,8 +313,133 @@ function applyFiltersAndRender() {
     renderTableWithData(tableData);
     updateCalendar();
     updateStats();
+    renderDashboard();
     
     console.timeEnd('FilteringAndRendering');
+}
+
+let abreviaturaChart = null;
+let estadoChart = null;
+
+function renderDashboard(responsableFilter = null) {
+    let data = appState.filteredData;
+    if (responsableFilter) {
+        data = data.filter(item => item.responsable === responsableFilter);
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const pastData = data.filter(item => {
+        if (!item.fecha_limite) return false;
+        const itemDate = new Date(item.fecha_limite);
+        return itemDate < today;
+    });
+
+    // KPI
+    const completado = data.filter(item => item.estado === 'Presentado').length;
+    const total = pastData.length - pastData.filter(item => item.estado === 'No Aplica').length;
+    const compliance = total > 0 ? (completado / total) * 100 : 0;
+    document.getElementById('complianceKpi').textContent = `${compliance.toFixed(2)}%`;
+
+    // Abreviatura Chart (Stacked)
+    const abreviaturaData = data.reduce((acc, item) => {
+        if (!acc[item.abreviatura]) {
+            acc[item.abreviatura] = { 'Pendiente': 0, 'Presentado': 0, 'No Aplica': 0 };
+        }
+        acc[item.abreviatura][item.estado]++;
+        return acc;
+    }, {});
+
+    const abreviaturaLabels = Object.keys(abreviaturaData);
+    const abreviaturaDatasets = [
+        {   label: 'Pendiente',
+            data: abreviaturaLabels.map(label => abreviaturaData[label]['Pendiente']),
+            backgroundColor: 'rgba(255, 99, 132, 0.5)'
+        },
+        {   label: 'Presentado',
+            data: abreviaturaLabels.map(label => abreviaturaData[label]['Presentado']),
+            backgroundColor: 'rgba(75, 192, 192, 0.5)'
+        },
+        {   label: 'No Aplica',
+            data: abreviaturaLabels.map(label => abreviaturaData[label]['No Aplica']),
+            backgroundColor: 'rgba(201, 203, 207, 0.5)'
+        }
+    ];
+
+    const abreviaturaChartCtx = document.getElementById('abreviaturaChart').getContext('2d');
+    if(abreviaturaChart) {
+        abreviaturaChart.destroy();
+    }
+    abreviaturaChart = new Chart(abreviaturaChartCtx, {
+        type: 'bar',
+        data: { labels: abreviaturaLabels, datasets: abreviaturaDatasets },
+        options: {
+            scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }
+        }
+    });
+
+    // Estado Chart
+    const estadoData = data.reduce((acc, item) => {
+        acc[item.estado] = (acc[item.estado] || 0) + 1;
+        return acc;
+    }, {});
+
+    const estadoChartCtx = document.getElementById('estadoChart').getContext('2d');
+    if(estadoChart) {
+        estadoChart.destroy();
+    }
+    estadoChart = new Chart(estadoChartCtx, {
+        type: 'pie',
+        data: {
+            labels: Object.keys(estadoData),
+            datasets: [{
+                label: '# de Obligaciones',
+                data: Object.values(estadoData),
+                backgroundColor: [
+                    'rgba(255, 99, 132, 0.2)',
+                    'rgba(54, 162, 235, 0.2)',
+                    'rgba(255, 206, 86, 0.2)',
+                    'rgba(75, 192, 192, 0.2)',
+                    'rgba(153, 102, 255, 0.2)',
+                    'rgba(255, 159, 64, 0.2)'
+                ],
+                borderColor: [
+                    'rgba(255, 99, 132, 1)',
+                    'rgba(54, 162, 235, 1)',
+                    'rgba(255, 206, 86, 1)',
+                    'rgba(75, 192, 192, 1)',
+                    'rgba(153, 102, 255, 1)',
+                    'rgba(255, 159, 64, 1)'
+                ],
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false
+        }
+    });
+
+    // Responsable Legend
+    const responsables = [...new Set(appState.filteredData.map(item => item.responsable))];
+    const legendContainer = document.getElementById('responsable-legend');
+    legendContainer.innerHTML = '<strong>Responsables:</strong><br>';
+    const colors = ['#ff6384', '#36a2eb', '#cc65fe', '#ffce56', '#4bc0c0', '#9966ff', '#ff9f40'];
+    responsables.forEach((responsable, index) => {
+        const color = colors[index % colors.length];
+        const legendItem = document.createElement('span');
+        legendItem.textContent = responsable;
+        legendItem.className = 'legend-item';
+        legendItem.style.backgroundColor = color;
+        legendItem.onclick = () => renderDashboard(responsable);
+        legendContainer.appendChild(legendItem);
+    });
+    const clearFilter = document.createElement('span');
+    clearFilter.textContent = 'Limpiar';
+    clearFilter.className = 'legend-item legend-clear';
+    clearFilter.onclick = () => renderDashboard();
+    legendContainer.appendChild(clearFilter);
 }
 
 function updateFilterControls(data) {
@@ -707,13 +864,7 @@ function clearFilters() {
     applyFiltersAndRender();
 }
 
-function toggleFilters() {
-    const filtersSection = document.querySelector('.filters-section');
-    const toggleBtn = document.getElementById('toggleFiltersBtn');
-    filtersSection.classList.toggle('collapsed');
-    const isCollapsed = filtersSection.classList.contains('collapsed');
-    toggleBtn.textContent = isCollapsed ? 'Mostrar' : 'Ocultar';
-}
+
 
 function handleFilterSearch(e) {
     const searchTerm = e.target.value.toLowerCase();
